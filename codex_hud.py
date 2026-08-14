@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Codex Token Overlay v0.2.0
+Codex Token Overlay v0.2.1
 
 Read-only floating HUD for Codex Desktop / Codex CLI rollout JSONL files.
 
@@ -37,6 +37,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
+from icon_assets import create_icon_image
+
 
 # -----------------------------
 # Basic helpers
@@ -48,7 +50,7 @@ def codex_home_default() -> Path:
 
 
 APP_NAME = "CodexTokenOverlay"
-APP_VERSION = "0.2.0"
+APP_VERSION = "0.2.1"
 
 
 def app_data_dir() -> Path:
@@ -1441,9 +1443,7 @@ def run_gui(args: argparse.Namespace) -> int:
     tray_state: dict[str, Any] = {"quit": False}
     try:
         import pystray
-        from PIL import Image, ImageDraw
-        image = Image.new("RGBA", (64, 64), (27, 27, 29, 255)); draw = ImageDraw.Draw(image)
-        draw.rounded_rectangle((6, 6, 58, 58), radius=12, fill=(87, 185, 126, 255)); draw.text((18, 17), "C", fill=(255, 255, 255, 255))
+        image = create_icon_image(64)
         def tray_action(action):
             return lambda icon, item: tray_queue.put(action)
         menu = pystray.Menu(

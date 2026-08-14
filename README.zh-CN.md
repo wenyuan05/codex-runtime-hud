@@ -17,12 +17,12 @@
 
 ## 下载
 
-从 [Releases](https://github.com/wenyuan05/codex-token-overlay/releases) 下载 `CodexTokenOverlay-v0.2.0-windows-x64.exe`。它是免安装、未签名的 Windows x64 EXE，首次运行可能出现 SmartScreen 提示。
+从 [Releases](https://github.com/wenyuan05/codex-token-overlay/releases) 下载 `CodexTokenOverlay-v0.2.1-windows-x64.exe`。它是免安装、未签名的 Windows x64 EXE，首次运行可能出现 SmartScreen 提示。
 
 可用 `SHA256SUMS.txt` 校验：
 
 ```powershell
-Get-FileHash .\CodexTokenOverlay-v0.2.0-windows-x64.exe -Algorithm SHA256
+Get-FileHash .\CodexTokenOverlay-v0.2.1-windows-x64.exe -Algorithm SHA256
 ```
 
 双击 EXE 即可运行。托盘菜单提供显示/隐藏、开机启动、统计范围切换和退出。开机启动默认关闭，启用后只写入当前用户注册表；拖动悬浮窗后位置会跨重启保留。

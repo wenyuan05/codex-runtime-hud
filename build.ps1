@@ -7,7 +7,8 @@ py -3 -m pip install -r requirements-build.txt
 
 $iconDir = Join-Path $PSScriptRoot 'build'
 New-Item -ItemType Directory -Force -Path $iconDir | Out-Null
-py -3 -c "from PIL import Image,ImageDraw; im=Image.new('RGBA',(256,256),(27,27,29,255)); d=ImageDraw.Draw(im); d.rounded_rectangle((12,12,244,244),radius=52,fill=(87,185,126,255)); d.text((74,64),'C',fill='white',stroke_width=2); im.save(r'$iconDir\codex-token-overlay.ico',sizes=[(256,256),(128,128),(64,64),(32,32),(16,16)])"
+py -3 scripts/make_icon.py --output (Join-Path $iconDir 'codex-token-overlay.ico')
+if ($LASTEXITCODE -ne 0) { throw "Icon generation failed with exit code $LASTEXITCODE." }
 $distDir = Join-Path $PSScriptRoot 'dist'
 $workDir = Join-Path $PSScriptRoot 'build\pyinstaller'
 if (Test-Path -LiteralPath $distDir) { Remove-Item -LiteralPath $distDir -Recurse -Force -ErrorAction Stop }
