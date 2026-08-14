@@ -4,11 +4,11 @@ VSVersionInfo(
   kids=[StringFileInfo([StringTable('040904B0', [
     StringStruct('CompanyName', 'wenyuan05'),
     StringStruct('FileDescription', 'Codex Token Overlay - read-only local session HUD'),
-    StringStruct('FileVersion', '0.2.1'),
+    StringStruct('FileVersion', '0.3.0'),
     StringStruct('InternalName', 'CodexTokenOverlay'),
     StringStruct('OriginalFilename', 'CodexTokenOverlay.exe'),
     StringStruct('ProductName', 'Codex Token Overlay'),
-    StringStruct('ProductVersion', '0.2.1'),
+    StringStruct('ProductVersion', '0.3.0'),
     StringStruct('LegalCopyright', 'MIT License; 2026 wenyuan05'),
   ])]), VarFileInfo([VarStruct('Translation', [1033, 1200])])]
 )

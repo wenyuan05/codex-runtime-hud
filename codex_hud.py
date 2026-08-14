@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Codex Token Overlay v0.2.1
+Codex Token Overlay v0.3.0
 
 Read-only floating HUD for Codex Desktop / Codex CLI rollout JSONL files.
 
-v0.2 UI:
+v0.3 UI:
 - Default scope is the latest/current turn, not the whole session.
 - Supports Codex v1 wire names task_started / task_complete.
 - Current-turn tokens prefer exact raw_response_completed usage; otherwise
@@ -50,7 +50,7 @@ def codex_home_default() -> Path:
 
 
 APP_NAME = "CodexTokenOverlay"
-APP_VERSION = "0.2.1"
+APP_VERSION = "0.3.0"
 
 
 def app_data_dir() -> Path:

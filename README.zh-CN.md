@@ -18,15 +18,15 @@
 
 ## 下载
 
-从 [Releases](https://github.com/wenyuan05/codex-token-overlay/releases) 下载 `CodexTokenOverlay-v0.2.1-windows-x64.exe`。它是免安装、未签名的 Windows x64 EXE，首次运行可能出现 SmartScreen 提示。
+从 [Releases](https://github.com/wenyuan05/codex-token-overlay/releases) 下载 `CodexTokenOverlay-v0.3.0-windows-x64.exe`。它是免安装、未签名的 Windows x64 EXE，首次运行可能出现 SmartScreen 提示。
 
 可用 `SHA256SUMS.txt` 校验：
 
 ```powershell
-Get-FileHash .\CodexTokenOverlay-v0.2.1-windows-x64.exe -Algorithm SHA256
+Get-FileHash .\CodexTokenOverlay-v0.3.0-windows-x64.exe -Algorithm SHA256
 ```
 
-双击 EXE 即可运行。折叠 HUD 只显示范围、Cache、In、Out；点击主体展开详细面板。点击“本轮/累计”只切换范围，不会展开。拖动背景区域移动窗口；右键打开原生菜单，可切换范围、始终置顶、开机启动、语言、重置位置、复制和退出。托盘菜单提供显示/隐藏、开机启动和退出。开机启动默认关闭，启用后只写入当前用户注册表；位置和 UI 偏好会跨重启保留。
+双击 EXE 即可运行。折叠 HUD 只显示范围、Cache、In、Out；点击主体展开详细面板。点击“本轮/累计”只切换范围，不会展开。拖动背景区域移动窗口；右键打开原生菜单，可切换范围、始终置顶、开机启动、语言、重置位置、复制和退出。托盘菜单提供显示/隐藏、范围、开机启动、语言（自动/English/简体中文）、关于和退出。开机启动默认关闭，启用后只写入当前用户注册表；位置和 UI 偏好会跨重启保留。
 
 ## 源码运行
 

@@ -59,4 +59,4 @@ jobs:
           files: |
             dist/CodexTokenOverlay-${{ github.ref_name }}-windows-x64.exe
             dist/SHA256SUMS.txt
-          generate_release_notes: true
+          body_path: RELEASE_NOTES_${{ github.ref_name }}.md

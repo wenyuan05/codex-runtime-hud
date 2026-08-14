@@ -18,15 +18,15 @@ A small Windows always-on-top HUD for Codex Desktop / Codex CLI token usage. It 
 
 ## Download
 
-Download `CodexTokenOverlay-v0.2.1-windows-x64.exe` from [Releases](https://github.com/wenyuan05/codex-token-overlay/releases). It is a portable, unsigned Windows x64 executable; SmartScreen may show a first-run warning.
+Download `CodexTokenOverlay-v0.3.0-windows-x64.exe` from [Releases](https://github.com/wenyuan05/codex-token-overlay/releases). It is a portable, unsigned Windows x64 executable; SmartScreen may show a first-run warning.
 
 Verify the download with `SHA256SUMS.txt`:
 
 ```powershell
-Get-FileHash .\CodexTokenOverlay-v0.2.1-windows-x64.exe -Algorithm SHA256
+Get-FileHash .\CodexTokenOverlay-v0.3.0-windows-x64.exe -Algorithm SHA256
 ```
 
-Double-click the EXE. The compact HUD shows only scope, Cache, In and Out; click the body to expand the detailed panel. Click Current/Session to switch scope without expanding. Drag from the background to move it; a right-click opens the native menu for scope, Always on top, startup, language, reset position, copy and Quit. The tray icon provides Show/Hide, Start with Windows and Quit. Startup is opt-in and uses the current user's registry only. Position and UI preferences persist across launches.
+Double-click the EXE. The compact HUD shows only scope, Cache, In and Out; click the body to expand the detailed panel. Click Current/Session to switch scope without expanding. Drag from the background to move it; a right-click opens the native menu for scope, Always on top, startup, language, reset position, copy and Quit. The tray icon provides Show/Hide, scope, Start with Windows, Language (Auto/English/Simplified Chinese), About and Quit. Startup is opt-in and uses the current user's registry only. Position and UI preferences persist across launches.
 
 ## Run from source
 
