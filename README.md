@@ -14,6 +14,7 @@ A small Windows always-on-top HUD for Codex Desktop / Codex CLI token usage. It 
 - Does **not** read `auth.json`, API keys, `.env` files, prompts outside the rollout file, or credentials.
 - The application makes no network connections. GitHub, Python and PyInstaller are only used for distribution/building.
 - Settings contain only window coordinates and UI preferences: `%LOCALAPPDATA%\CodexTokenOverlay\settings.json`.
+  UI preferences include `expanded`, `scope`, `language` (`auto`, `en`, `zh-CN`) and `always_on_top`. `Auto` follows the Windows UI language; an explicit English/Chinese choice is remembered until changed back to `Auto`.
 
 ## Download
 
@@ -25,7 +26,7 @@ Verify the download with `SHA256SUMS.txt`:
 Get-FileHash .\CodexTokenOverlay-v0.2.1-windows-x64.exe -Algorithm SHA256
 ```
 
-Double-click the EXE. The tray icon provides Show/Hide, Start with Windows, scope switching and Quit. Startup is opt-in and uses the current user's registry only. Dragging the HUD saves its position across launches.
+Double-click the EXE. The compact HUD shows only scope, Cache, In and Out; click the body to expand the detailed panel. Click Current/Session to switch scope without expanding. Drag from the background to move it; a right-click opens the native menu for scope, Always on top, startup, language, reset position, copy and Quit. The tray icon provides Show/Hide, Start with Windows and Quit. Startup is opt-in and uses the current user's registry only. Position and UI preferences persist across launches.
 
 ## Run from source
 

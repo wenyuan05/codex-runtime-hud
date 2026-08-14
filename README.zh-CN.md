@@ -14,6 +14,7 @@
 - **不会**读取 `auth.json`、API Key、`.env`、rollout 之外的提示词或凭据。
 - 应用运行时不联网；GitHub、Python、PyInstaller 只用于分发和构建。
 - 设置文件只保存窗口坐标和 UI 偏好：`%LOCALAPPDATA%\CodexTokenOverlay\settings.json`。
+  UI 偏好包括 `expanded`、`scope`、`language`（`auto`、`en`、`zh-CN`）和 `always_on_top`。`Auto` 跟随 Windows UI 语言；手动选择中英文后会记住该选择，改回 `Auto` 才恢复自动检测。
 
 ## 下载
 
@@ -25,7 +26,7 @@
 Get-FileHash .\CodexTokenOverlay-v0.2.1-windows-x64.exe -Algorithm SHA256
 ```
 
-双击 EXE 即可运行。托盘菜单提供显示/隐藏、开机启动、统计范围切换和退出。开机启动默认关闭，启用后只写入当前用户注册表；拖动悬浮窗后位置会跨重启保留。
+双击 EXE 即可运行。折叠 HUD 只显示范围、Cache、In、Out；点击主体展开详细面板。点击“本轮/累计”只切换范围，不会展开。拖动背景区域移动窗口；右键打开原生菜单，可切换范围、始终置顶、开机启动、语言、重置位置、复制和退出。托盘菜单提供显示/隐藏、开机启动和退出。开机启动默认关闭，启用后只写入当前用户注册表；位置和 UI 偏好会跨重启保留。
 
 ## 源码运行
 
@@ -56,7 +57,7 @@ Set-ExecutionPolicy -Scope Process Bypass
 - 单击主体或按 Space：展开/收起。
 - 拖动主体：移动并保存悬浮窗位置。
 - 点击“本轮/累计”：切换当前轮或当前 session 累计统计。
-- 中键/Ctrl+C：复制当前可见信息；右键/Escape：隐藏到托盘。
+- 中键/Ctrl+C：复制当前信息；右键：打开原生设置菜单；Escape：隐藏到托盘。
 - 缓存命中率 = `cached_input_tokens / input_tokens`。
 - 本轮优先使用精确的 `raw_response_completed` usage，否则使用累计值差分。
 - 工具耗时使用区间并集，并发工具不会重复计时。

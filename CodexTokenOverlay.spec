@@ -3,7 +3,7 @@ from pathlib import Path
 from PyInstaller.utils.hooks import collect_submodules
 
 root = Path(SPECPATH)
-hiddenimports = collect_submodules("pystray")
+hiddenimports = collect_submodules("pystray") + ["overlay_ui"]
 
 a = Analysis([str(root / "codex_hud.py")], pathex=[str(root)], hiddenimports=hiddenimports,
              datas=[], binaries=[], noarchive=False)

@@ -109,6 +109,7 @@ def resolve_language(value: str) -> str:
 TRANSLATIONS = {
     "zh-CN": {
         "title": "Codex Token Overlay",
+        "current": "本轮",
         "turn": "本轮",
         "session": "累计",
         "cache": "缓存",
@@ -123,11 +124,28 @@ TRANSLATIONS = {
         "quit": "退出",
         "copy": "复制当前信息",
         "language": "语言：中文",
+        "language_auto": "自动",
+        "language_english": "English",
+        "language_chinese": "简体中文",
+        "topmost": "始终置顶",
+        "reset_position": "重置位置",
+        "local_only": "仅本地 · 只读 session · 不联网",
+        "model_idle": "空闲",
+        "model_active": "运行中",
+        "steps": "Steps",
+        "llm": "LLM",
+        "tools": "Tools",
+        "ttft": "TTFT",
+        "speed": "Speed",
+        "reasoning": "Reasoning",
+        "context": "Context",
+        "no_data": "—",
         "invalid_rollout": "未找到 rollout JSONL：{home}",
         "tk_missing": "Tkinter 不可用。可先用 --once，或安装带 Tk 的 Python。",
     },
     "en": {
         "title": "Codex Token Overlay",
+        "current": "Current",
         "turn": "Turn",
         "session": "Session",
         "cache": "Cache",
@@ -142,6 +160,22 @@ TRANSLATIONS = {
         "quit": "Quit",
         "copy": "Copy visible text",
         "language": "Language: English",
+        "language_auto": "Auto",
+        "language_english": "English",
+        "language_chinese": "简体中文",
+        "topmost": "Always on top",
+        "reset_position": "Reset position",
+        "local_only": "Local-only · Read-only session · No network",
+        "model_idle": "Idle",
+        "model_active": "Running",
+        "steps": "Steps",
+        "llm": "LLM",
+        "tools": "Tools",
+        "ttft": "TTFT",
+        "speed": "Speed",
+        "reasoning": "Reasoning",
+        "context": "Context",
+        "no_data": "—",
         "invalid_rollout": "No rollout JSONL found: {home}",
         "tk_missing": "Tkinter is unavailable. Use --once or install Python with Tk.",
     },
@@ -1285,7 +1319,7 @@ def diagnostic(parsed: ParsedRollout, m: ViewMetrics) -> str:
 # CLI / GUI
 # -----------------------------
 
-def run_gui(args: argparse.Namespace) -> int:
+def _legacy_run_gui(args: argparse.Namespace) -> int:
     try:
         import tkinter as tk
     except Exception as e:
@@ -1486,6 +1520,11 @@ def run_gui(args: argparse.Namespace) -> int:
 
     set_expanded(False); pump_tray(); refresh(); root.mainloop(); return 0
 
+def run_gui(args: argparse.Namespace) -> int:
+    from overlay_ui import run_gui as run_overlay_gui
+    return run_overlay_gui(args)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Codex Token Overlay — read-only local session HUD")
     ap.add_argument("--codex-home", default=str(codex_home_default()))
@@ -1498,9 +1537,9 @@ def main() -> int:
     ap.add_argument("--lang", choices=("auto", "zh-CN", "en"), default="auto", help="UI language (default: auto)")
     ap.set_defaults(model=True)
     args = ap.parse_args()
-    args.lang = resolve_language(args.lang)
 
     if args.once:
+        args.lang = resolve_language(args.lang)
         p = Path(args.file).expanduser() if args.file else find_latest_rollout(Path(args.codex_home).expanduser())
         if not p:
             print(tr(args.lang, "invalid_rollout", home=args.codex_home), file=sys.stderr)
