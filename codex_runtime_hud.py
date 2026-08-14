@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Codex Token Overlay v0.3.1
+Codex Runtime HUD v0.3.1
 
-Read-only floating HUD for Codex Desktop / Codex CLI rollout JSONL files.
+Read-only floating HUD for real-time current-turn performance in Codex Desktop / Codex CLI.
 
 v0.3 UI:
+- The current turn is the primary view; session cumulative metrics remain optional.
 - Default scope is the latest/current turn, not the whole session.
 - Supports Codex v1 wire names task_started / task_complete.
 - Current-turn tokens prefer exact raw_response_completed usage; otherwise
@@ -49,7 +50,9 @@ def codex_home_default() -> Path:
     return Path(override).expanduser() if override else Path.home() / ".codex"
 
 
-APP_NAME = "CodexTokenOverlay"
+APP_NAME = "CodexRuntimeHUD"
+APP_DISPLAY_NAME = "Codex Runtime HUD"
+LEGACY_APP_NAME = "CodexTokenOverlay"
 APP_VERSION = "0.3.1"
 
 
@@ -58,16 +61,25 @@ def app_data_dir() -> Path:
     return Path(root) / APP_NAME
 
 
+def legacy_app_data_dir() -> Path:
+    root = os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Local")
+    return Path(root) / LEGACY_APP_NAME
+
+
 def settings_path() -> Path:
     return app_data_dir() / "settings.json"
 
 
 def load_settings() -> dict[str, Any]:
-    try:
-        data = json.loads(settings_path().read_text(encoding="utf-8"))
-        return data if isinstance(data, dict) else {}
-    except (OSError, ValueError, TypeError):
-        return {}
+    paths = [settings_path(), legacy_app_data_dir() / "settings.json"]
+    for path in paths:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                return data
+        except (OSError, ValueError, TypeError):
+            continue
+    return {}
 
 
 def save_settings(data: dict[str, Any]) -> None:
@@ -108,7 +120,7 @@ def resolve_language(value: str) -> str:
 
 TRANSLATIONS = {
     "zh-CN": {
-        "title": "Codex Token Overlay",
+        "title": "Codex Runtime HUD",
         "current": "本轮",
         "turn": "本轮",
         "session": "累计",
@@ -144,7 +156,7 @@ TRANSLATIONS = {
         "tk_missing": "Tkinter 不可用。可先用 --once，或安装带 Tk 的 Python。",
     },
     "en": {
-        "title": "Codex Token Overlay",
+        "title": "Codex Runtime HUD",
         "current": "Current",
         "turn": "Turn",
         "session": "Session",
@@ -1584,7 +1596,7 @@ def run_gui(args: argparse.Namespace) -> int:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Codex Token Overlay — read-only local session HUD")
+    ap = argparse.ArgumentParser(description="Codex Runtime HUD — real-time current-turn performance monitor")
     ap.add_argument("--codex-home", default=str(codex_home_default()))
     ap.add_argument("--file", help="Monitor one rollout JSONL instead of auto-selecting latest")
     ap.add_argument("--interval", type=float, default=0.75)

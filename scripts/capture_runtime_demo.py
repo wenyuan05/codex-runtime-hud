@@ -11,8 +11,10 @@ from pathlib import Path
 from PIL import Image, ImageGrab
 
 ROOT = Path(__file__).resolve().parents[1]
-OUT = ROOT / "assets" / "demo.gif"
+OUT = ROOT / "assets" / "codex-runtime-hud-demo.gif"
 user32 = ctypes.windll.user32
+MOUSEEVENTF_LEFTDOWN = 0x0002
+MOUSEEVENTF_LEFTUP = 0x0004
 
 
 def find_window(title: str) -> int:
@@ -39,15 +41,23 @@ def grab(hwnd: int):
     return ImageGrab.grab(window=hwnd).convert("RGB")
 
 
+def click_window(hwnd: int, x: int, y: int) -> None:
+    rect = wintypes.RECT()
+    user32.GetWindowRect(hwnd, ctypes.byref(rect))
+    user32.SetCursorPos(rect.left + int(x), rect.top + int(y))
+    user32.mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
+    user32.mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
+
+
 def main() -> int:
     if sys.platform != "win32":
         print("Windows only", file=sys.stderr)
         return 2
-    proc = subprocess.Popen([sys.executable, str(ROOT / "codex_hud.py"), "--file", str(ROOT / "examples" / "sample_rollout.jsonl"), "--lang", "en"])
+    proc = subprocess.Popen([sys.executable, str(ROOT / "codex_runtime_hud.py"), "--file", str(ROOT / "examples" / "sample_rollout.jsonl"), "--lang", "en"])
     try:
         hwnd = 0
         for _ in range(40):
-            hwnd = find_window("Codex Token Overlay")
+            hwnd = find_window("Codex Runtime HUD")
             if hwnd:
                 break
             time.sleep(0.1)
@@ -56,8 +66,7 @@ def main() -> int:
         time.sleep(0.5)
         frames = [grab(hwnd)]
         user32.SetForegroundWindow(hwnd)
-        user32.keybd_event(0x20, 0, 0, 0)  # Space
-        user32.keybd_event(0x20, 0, 2, 0)
+        click_window(hwnd, 170, 20)
         time.sleep(0.5)
         frames.append(grab(hwnd))
         width = max(frame.width for frame in frames)

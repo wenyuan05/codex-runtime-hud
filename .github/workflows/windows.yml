@@ -26,13 +26,13 @@ jobs:
         run: ./scripts/build.ps1
       - name: CLI smoke test
         shell: pwsh
-        run: ./dist/CodexTokenOverlay.exe --once --file ./examples/sample_rollout.jsonl --lang en
+        run: ./dist/CodexRuntimeHUD.exe --once --file ./examples/sample_rollout.jsonl --lang en
       - name: Upload EXE artifact
         uses: actions/upload-artifact@v4
         with:
-          name: CodexTokenOverlay-windows-x64
+          name: CodexRuntimeHUD-windows-x64
           path: |
-            dist/CodexTokenOverlay.exe
+            dist/CodexRuntimeHUD.exe
             dist/SHA256SUMS.txt
 
   release:
@@ -44,19 +44,19 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: CodexTokenOverlay-windows-x64
+          name: CodexRuntimeHUD-windows-x64
           path: dist
       - name: Rename release asset
         shell: pwsh
         run: |
-          $target = "CodexTokenOverlay-${{ github.ref_name }}-windows-x64.exe"
-          Rename-Item dist/CodexTokenOverlay.exe $target
+          $target = "CodexRuntimeHUD-${{ github.ref_name }}-windows-x64.exe"
+          Rename-Item dist/CodexRuntimeHUD.exe $target
           $hash = (Get-FileHash "dist/$target" -Algorithm SHA256).Hash.ToLowerInvariant()
           Set-Content dist/SHA256SUMS.txt -Encoding utf8 "$hash  $target"
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/CodexTokenOverlay-${{ github.ref_name }}-windows-x64.exe
+            dist/CodexRuntimeHUD-${{ github.ref_name }}-windows-x64.exe
             dist/SHA256SUMS.txt
           body_path: docs/releases/RELEASE_NOTES_${{ github.ref_name }}.md

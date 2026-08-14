@@ -1,1 +1,1 @@
-"""Unit tests for Codex Token Overlay."""
+"""Unit tests for Codex Runtime HUD."""

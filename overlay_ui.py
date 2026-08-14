@@ -1,6 +1,6 @@
-"""Canvas-based Tk UI for Codex Token Overlay.
+"""Canvas-based Tk UI for Codex Runtime HUD.
 
-The parser remains in :mod:`codex_hud`; this module only owns presentation,
+The parser remains in :mod:`codex_runtime_hud`; this module only owns presentation,
 interaction and UI preferences so visual changes cannot alter metric semantics.
 """
 
@@ -17,13 +17,13 @@ def run_gui(args: Any) -> int:
     try:
         import tkinter as tk
     except Exception as exc:
-        from codex_hud import tr
+        from codex_runtime_hud import tr
         import sys
         print(tr(args.lang, "tk_missing"), file=sys.stderr)
         print(exc, file=sys.stderr)
         return 2
 
-    from codex_hud import (
+    from codex_runtime_hud import (
         IncrementalRolloutReader,
         ParsedRollout,
         RootThreadSelector,
@@ -437,7 +437,7 @@ def run_gui(args: Any) -> int:
             pystray.MenuItem(lambda item: tr(lang, "about"), tray_action("about")),
             pystray.MenuItem(lambda item: tr(lang, "quit"), tray_action("quit")),
         )
-        icon = pystray.Icon("CodexTokenOverlay", image, tr(lang, "title"), menu)
+        icon = pystray.Icon("CodexRuntimeHUD", image, tr(lang, "title"), menu)
         tray_icon["icon"] = icon
         threading.Thread(target=icon.run, daemon=True, name="codex-overlay-tray").start()
     except Exception:
