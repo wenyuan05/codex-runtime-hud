@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Codex Runtime HUD v0.3.1
+Codex Runtime HUD v0.3.2
 
 Read-only floating HUD for real-time current-turn performance in Codex Desktop / Codex CLI.
 
@@ -53,7 +53,7 @@ def codex_home_default() -> Path:
 APP_NAME = "CodexRuntimeHUD"
 APP_DISPLAY_NAME = "Codex Runtime HUD"
 LEGACY_APP_NAME = "CodexTokenOverlay"
-APP_VERSION = "0.3.1"
+APP_VERSION = "0.3.2"
 
 
 def app_data_dir() -> Path:

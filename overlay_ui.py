@@ -134,7 +134,10 @@ def run_gui(args: Any) -> int:
         return max(left + margin, min(int(x), max_x)), max(top + margin, min(int(y), max_y))
 
     def window_size() -> tuple[int, int]:
-        return (360, 214) if state["expanded"] else (340, 40)
+        # Compact mode keeps the HUD narrow while giving its three headline
+        # counters a readable vertical rhythm instead of squeezing them into
+        # one horizontal strip.
+        return (360, 214) if state["expanded"] else (220, 112)
 
     def rounded_rect(x1: int, y1: int, x2: int, y2: int, radius: int, fill: str, tags: Any = ()) -> None:
         radius = max(1, min(radius, (x2 - x1) // 2, (y2 - y1) // 2))
@@ -239,17 +242,17 @@ def run_gui(args: Any) -> int:
                 draw_text(18, 207, f"errors={parsed.parse_errors} · coverage={metrics.tool_timing_coverage*100:.0f}%", UI_TINY, MUTED)
         else:
             scope_w, scope_h = 72, 24
-            scope_x, scope_y = 10, 8
+            scope_x, scope_y = width - scope_w - 10, 8
             scope_bounds = (scope_x, scope_y, scope_x + scope_w, scope_y + scope_h)
             rounded_rect(scope_x, scope_y, scope_x + scope_w, scope_y + scope_h, 7, SURFACE_2, ("scope",))
             rounded_rect(scope_x + 2, scope_y + 2, scope_x + scope_w - 2, scope_y + scope_h - 2, 5, "#30343b", ("scope",))
             draw_text(scope_x + scope_w / 2, scope_y + 12, tr(lang, "current") if state["scope"] == "turn" else tr(lang, "session"), UI_TINY, FG, "center", ("scope",))
-            draw_text(96, 20, "Cache", UI_TINY, SECONDARY)
-            draw_text(132, 20, values["cache"], MONO, FG)
-            draw_text(184, 20, "In", UI_TINY, SECONDARY)
-            draw_text(207, 20, values["input"], MONO, FG)
-            draw_text(260, 20, "Out", UI_TINY, SECONDARY)
-            draw_text(294, 20, values["output"], MONO, FG)
+            for index, (label, value) in enumerate(
+                ((tr(lang, "cache"), values["cache"]), ("In", values["input"]), ("Out", values["output"]))
+            ):
+                y = 49 + index * 20
+                draw_text(18, y, label, UI_TINY, SECONDARY)
+                draw_text(82, y, value, MONO, FG)
 
     def persist_ui() -> None:
         try:

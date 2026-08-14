@@ -75,7 +75,9 @@ def main() -> int:
         time.sleep(0.5)
         frames = [grab(hwnd)]
         user32.SetForegroundWindow(hwnd)
-        click_window(hwnd, 170, 20)
+        # Compact mode places the scope switch on the right; click the open
+        # body area so the demo expands instead of changing scope.
+        click_window(hwnd, 110, 20)
         time.sleep(0.5)
         frames.append(grab(hwnd))
         width = max(frame.width for frame in frames)
