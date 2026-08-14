@@ -17,12 +17,12 @@ A small Windows always-on-top HUD for Codex Desktop / Codex CLI token usage. It 
 
 ## Download
 
-Download `CodexTokenOverlay-v0.1.0-windows-x64.exe` from [Releases](https://github.com/wenyuan05/codex-token-overlay/releases). It is a portable, unsigned Windows x64 executable; SmartScreen may show a first-run warning.
+Download `CodexTokenOverlay-v0.2.0-windows-x64.exe` from [Releases](https://github.com/wenyuan05/codex-token-overlay/releases). It is a portable, unsigned Windows x64 executable; SmartScreen may show a first-run warning.
 
 Verify the download with `SHA256SUMS.txt`:
 
 ```powershell
-Get-FileHash .\CodexTokenOverlay-v0.1.0-windows-x64.exe -Algorithm SHA256
+Get-FileHash .\CodexTokenOverlay-v0.2.0-windows-x64.exe -Algorithm SHA256
 ```
 
 Double-click the EXE. The tray icon provides Show/Hide, Start with Windows, scope switching and Quit. Startup is opt-in and uses the current user's registry only. Dragging the HUD saves its position across launches.
@@ -60,6 +60,9 @@ The result is `dist\CodexTokenOverlay.exe` plus `dist\SHA256SUMS.txt`. The same 
 - Cache hit is `cached_input_tokens / input_tokens`.
 - Current-turn usage prefers exact `raw_response_completed` usage and otherwise uses cumulative deltas.
 - Tool time is an interval union, so overlapping tools are not double-counted.
+- Tool events are normalized from response-item call/output pairs, legacy begin/end events, and future `item_started/item_completed` wrappers.
+- Automatic selection follows the latest eligible root user thread and excludes subagent/memory-consolidation sessions; `--file` overrides selection.
+- Token usage may remain pending until Codex persists a `token_count` or response-usage event.
 
 ## License
 

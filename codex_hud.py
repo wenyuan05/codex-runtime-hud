@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Codex Token Overlay v0.1.0
+Codex Token Overlay v0.2.0
 
 Read-only floating HUD for Codex Desktop / Codex CLI rollout JSONL files.
 
-v0.3 UI:
+v0.2 UI:
 - Default scope is the latest/current turn, not the whole session.
 - Supports Codex v1 wire names task_started / task_complete.
 - Current-turn tokens prefer exact raw_response_completed usage; otherwise
@@ -48,7 +48,7 @@ def codex_home_default() -> Path:
 
 
 APP_NAME = "CodexTokenOverlay"
-APP_VERSION = "0.1.0"
+APP_VERSION = "0.2.0"
 
 
 def app_data_dir() -> Path:
@@ -308,6 +308,8 @@ class ToolSpan:
     start: Optional[float] = None
     end: Optional[float] = None
     explicit_duration: Optional[float] = None
+    timing_source: str = "unknown"
+    timing_priority: int = 0
 
     def normalized_interval(self) -> Optional[tuple[float, float]]:
         st, en = self.start, self.end
@@ -329,6 +331,19 @@ class ToolSpan:
             return max(0.0, self.explicit_duration)
         return None
 
+
+@dataclass(frozen=True)
+class NormalizedToolEvent:
+    """One tool lifecycle fragment normalized across Codex rollout wire shapes."""
+
+    call_id: str
+    kind: str = "tool"
+    turn_id: Optional[str] = None
+    phase: str = "begin"
+    timestamp: Optional[float] = None
+    duration: Optional[float] = None
+    source: str = "unknown"
+    priority: int = 0
 
 def union_duration(spans: list[ToolSpan]) -> tuple[float, float]:
     """
@@ -379,6 +394,9 @@ class Turn:
     usage_latest: Usage = field(default_factory=Usage)
     exact_response_usage: Usage = field(default_factory=Usage)
     exact_response_count: int = 0
+    exact_response_ids: set[str] = field(default_factory=set)
+    last_token_usage: Usage = field(default_factory=Usage)
+    token_usage_seen: bool = False
     tool_ids: set[str] = field(default_factory=set)
     aborted: bool = False
 
@@ -398,6 +416,9 @@ class Turn:
     def usage(self) -> Usage:
         if self.exact_response_count > 0:
             return self.exact_response_usage
+        if (not self.usage_baseline.total_tokens and
+                (self.last_token_usage.total_tokens or self.last_token_usage.input_tokens or self.last_token_usage.output_tokens)):
+            return self.last_token_usage
         return self.usage_latest - self.usage_baseline
 
 
@@ -418,6 +439,7 @@ class ViewMetrics:
     context_window: Optional[int] = None
     current_context_tokens: Optional[int] = None
     exact_response_count: int = 0
+    usage_pending: bool = False
 
     def status_line(self, include_model: bool = True, lang: str = "zh-CN") -> str:
         parts: list[str] = []
@@ -449,9 +471,12 @@ class ViewMetrics:
         if hit is not None:
             parts.append(f"Cache hit {hit:.0f}%" if lang == "en" else f"缓存命中 {hit:.0f}%")
 
-        parts.append(
-            (f"Input {fmt_num(self.usage.input_tokens)} tok · Output {fmt_num(self.usage.output_tokens)} tok" if lang == "en" else f"输入 {fmt_num(self.usage.input_tokens)} tok · 输出 {fmt_num(self.usage.output_tokens)} tok")
-        )
+        if self.usage_pending:
+            parts.append("Input -- · Output --" if lang == "en" else "输入 -- · 输出 --")
+        else:
+            parts.append(
+                (f"Input {fmt_num(self.usage.input_tokens)} tok · Output {fmt_num(self.usage.output_tokens)} tok" if lang == "en" else f"输入 {fmt_num(self.usage.input_tokens)} tok · 输出 {fmt_num(self.usage.output_tokens)} tok")
+            )
         return "   |   ".join(parts)
 
 
@@ -500,6 +525,31 @@ class RolloutParser:
         "computer_call",
         "tool_call",
     }
+    RESPONSE_TOOL_OUTPUT_TYPES = {f"{name}_output" for name in RESPONSE_TOOL_TYPES}
+    CANONICAL_TOOL_TYPES = {
+        "commandexecution": "exec",
+        "command_execution": "exec",
+        "dynamictoolcall": "dynamic",
+        "dynamic_tool_call": "dynamic",
+        "websearch": "web",
+        "web_search": "web",
+        "filechange": "patch",
+        "file_change": "patch",
+        "mcp_tool_call": "mcp",
+        "mcptoolcall": "mcp",
+        "imagegeneration": "image",
+        "image_generation": "image",
+        "collabagentspawn": "agent_spawn",
+        "collab_agent_spawn": "agent_spawn",
+        "collabagentinteraction": "agent_interaction",
+        "collab_agent_interaction": "agent_interaction",
+        "collabwaiting": "agent_wait",
+        "collab_waiting": "agent_wait",
+        "shellcall": "exec",
+        "shell_call": "exec",
+        "localshellcall": "exec",
+        "local_shell_call": "exec",
+    }
 
     TURN_START_TYPES = {"task_started", "turn_started"}
     TURN_END_TYPES = {"task_complete", "turn_complete", "turn_completed"}
@@ -521,6 +571,8 @@ class RolloutParser:
         self.active_turn: Optional[Turn] = None
 
         self.tools: dict[str, ToolSpan] = {}
+        self.tool_timing_sources: dict[str, int] = {}
+        self.token_usage_events = 0
 
     @staticmethod
     def unwrap(obj: dict[str, Any]) -> tuple[str, dict[str, Any]]:
@@ -650,6 +702,7 @@ class RolloutParser:
             self.current_total_usage = total
 
         last = Usage.from_obj(info.get("last_token_usage"))
+        self.token_usage_events += 1
         if last.input_tokens > 0:
             self.current_context_tokens = last.input_tokens
 
@@ -660,6 +713,8 @@ class RolloutParser:
         turn = self.current_or_last_turn()
         if turn is not None:
             turn.usage_latest = self.current_total_usage
+            turn.last_token_usage = last
+            turn.token_usage_seen = True
             if cw > 0:
                 turn.context_window = cw
 
@@ -669,69 +724,79 @@ class RolloutParser:
             return
         turn = self.current_or_last_turn()
         if turn is not None:
+            response_id = str(payload.get("response_id") or self.call_id(payload, f"response:{self.seq}"))
+            if response_id in turn.exact_response_ids:
+                return
+            turn.exact_response_ids.add(response_id)
             turn.exact_response_usage = turn.exact_response_usage + usage
             turn.exact_response_count += 1
 
-    def begin_tool(self, typ: str, payload: dict[str, Any], ts: Optional[float]) -> None:
-        cid = self.call_id(payload, f"{typ}:{self.seq}")
-        tid = payload.get("turn_id")
-        turn = self.turn_by_id.get(str(tid)) if tid else self.current_or_last_turn()
+    @classmethod
+    def canonical_kind(cls, value: Any) -> Optional[str]:
+        raw = str(value or "").strip()
+        compact = re.sub(r"[^a-z0-9_]", "", raw.lower())
+        if compact in {"plan", "message", "reasoning", "agent_message", "custom_tool_call_output", "function_call_output"}:
+            return None
+        if compact in cls.CANONICAL_TOOL_TYPES:
+            return cls.CANONICAL_TOOL_TYPES[compact]
+        if compact.endswith("output"):
+            return None
+        return None
+
+    @staticmethod
+    def event_time(payload: dict[str, Any], keys: tuple[str, ...], fallback: Optional[float]) -> Optional[float]:
+        for key in keys:
+            value = payload.get(key)
+            if value not in (None, "", 0, "0"):
+                return (as_num(value) / 1000.0) if key.endswith("_ms") else parse_ts(value)
+        return fallback
+
+    def turn_for_tool(self, turn_id: Any, ts: Optional[float]) -> Turn:
+        turn = self.turn_by_id.get(str(turn_id)) if turn_id not in (None, "") else self.current_or_last_turn()
         if turn is None:
             turn = self.ensure_turn(None, ts, "implicit")
             self.active_turn = turn
+        return turn
 
-        span = self.tools.get(cid)
+    def apply_tool_event(self, event: NormalizedToolEvent) -> None:
+        turn = self.turn_for_tool(event.turn_id, event.timestamp)
+        span = self.tools.get(event.call_id)
         if span is None:
-            span = ToolSpan(cid, self.TOOL_BEGIN_TYPES.get(typ, "tool"), turn.turn_id)
-            self.tools[cid] = span
+            span = ToolSpan(event.call_id, event.kind, turn.turn_id)
+            self.tools[event.call_id] = span
+        if span.kind == "tool" or event.priority > span.timing_priority:
+            span.kind = event.kind
         span.turn_id = span.turn_id or turn.turn_id
-        st_ms = payload.get("started_at_ms")
-        st = parse_ts(as_num(st_ms)) if st_ms not in (None, 0, "0") else ts
-        if span.start is None:
-            span.start = st
-        turn.tool_ids.add(cid)
-
-    def end_tool(self, typ: str, payload: dict[str, Any], ts: Optional[float]) -> None:
-        cid = self.call_id(payload, f"{typ}:{self.seq}")
-        tid = payload.get("turn_id")
-        turn = self.turn_by_id.get(str(tid)) if tid else self.current_or_last_turn()
-        if turn is None:
-            turn = self.ensure_turn(None, ts, "implicit")
-
-        span = self.tools.get(cid)
-        if span is None:
-            span = ToolSpan(cid, self.TOOL_END_TYPES.get(typ, "tool"), turn.turn_id)
-            self.tools[cid] = span
-        span.turn_id = span.turn_id or turn.turn_id
-
-        d = None
-        if payload.get("duration_ms") is not None:
-            d = max(0.0, as_num(payload.get("duration_ms")) / 1000.0)
-        if d is None:
-            d = parse_duration_seconds(payload.get("duration"))
-        if d is not None:
-            span.explicit_duration = d
-
-        en_ms = payload.get("completed_at_ms")
-        en = parse_ts(as_num(en_ms)) if en_ms not in (None, 0, "0") else ts
-        if span.end is None:
-            span.end = en
-        turn.tool_ids.add(cid)
+        if event.phase in {"begin", "update"} and event.timestamp is not None and (span.start is None or event.priority >= span.timing_priority):
+            span.start = event.timestamp
+        if event.phase in {"end", "update"} and event.timestamp is not None and (span.end is None or event.priority >= span.timing_priority):
+            span.end = event.timestamp
+        if event.duration is not None and (span.explicit_duration is None or event.priority >= span.timing_priority):
+            span.explicit_duration = max(0.0, event.duration)
+        if event.timestamp is not None and event.priority >= span.timing_priority:
+            span.timing_source = event.source
+            span.timing_priority = event.priority
+        turn.tool_ids.add(event.call_id)
+        self.tool_timing_sources[event.source] = self.tool_timing_sources.get(event.source, 0) + 1
 
     def response_item(self, payload: dict[str, Any], ts: Optional[float]) -> None:
         item_type = str(payload.get("type", "") or "").lower()
-        if item_type in self.RESPONSE_TOOL_TYPES:
+        is_output = item_type in self.RESPONSE_TOOL_OUTPUT_TYPES or item_type.endswith("_output")
+        base_type = item_type[:-7] if is_output and item_type.endswith("_output") else item_type
+        if base_type in self.RESPONSE_TOOL_TYPES:
             cid = self.call_id(payload, f"response_tool:{self.seq}")
-            turn = self.current_or_last_turn()
-            if turn is None:
-                turn = self.ensure_turn(None, ts, "implicit")
-                self.active_turn = turn
-            turn.tool_ids.add(cid)
-            if cid not in self.tools:
-                self.tools[cid] = ToolSpan(cid, item_type, turn.turn_id, start=ts)
+            kind = self.canonical_kind(base_type) or base_type
+            self.apply_tool_event(NormalizedToolEvent(
+                call_id=cid,
+                kind=kind,
+                turn_id=payload.get("turn_id"),
+                phase="end" if is_output else "begin",
+                timestamp=ts,
+                source="response_item",
+                priority=1,
+            ))
 
         if item_type == "message" and str(payload.get("role", "")).lower() == "user":
-            # Legacy fallback for rollout files without task_started.
             if self.active_turn is None:
                 turn = self.ensure_turn(f"user:{self.seq}", ts, "user")
                 self.active_turn = turn
@@ -742,10 +807,40 @@ class RolloutParser:
             return
         tid = payload.get("turn_id")
         if tid:
-            turn = self.ensure_turn(str(tid), parse_ts(payload.get("started_at_ms")) or ts)
+            turn = self.ensure_turn(str(tid), self.event_time(payload, ("started_at_ms",), ts))
             if self.active_turn is None and turn.end_ts is None:
                 self.active_turn = turn
-        self.response_item(item, ts)
+        kind = self.canonical_kind(item.get("type"))
+        if kind is None:
+            return
+        cid = self.call_id(item, self.call_id(payload, f"item:{self.seq}"))
+        phase = "end" if typ == "item_completed" else "begin" if typ == "item_started" else "update"
+        timestamp = self.event_time(payload, ("started_at_ms",) if phase == "begin" else ("completed_at_ms", "started_at_ms"), None)
+        timestamp = timestamp or self.event_time(item, ("started_at_ms",) if phase == "begin" else ("completed_at_ms", "started_at_ms"), ts)
+        duration = None
+        if item.get("duration_ms") is not None:
+            duration = max(0.0, as_num(item.get("duration_ms")) / 1000.0)
+        elif payload.get("duration_ms") is not None:
+            duration = max(0.0, as_num(payload.get("duration_ms")) / 1000.0)
+        self.apply_tool_event(NormalizedToolEvent(cid, kind, str(tid) if tid else None, phase, timestamp, duration, "item_wrapper", 3))
+
+    def begin_tool(self, typ: str, payload: dict[str, Any], ts: Optional[float]) -> None:
+        kind = self.TOOL_BEGIN_TYPES.get(typ, "tool")
+        cid = self.call_id(payload, f"{typ}:{self.seq}")
+        start = self.event_time(payload, ("started_at_ms",), ts)
+        duration = parse_duration_seconds(payload.get("duration"))
+        if payload.get("duration_ms") is not None:
+            duration = max(0.0, as_num(payload.get("duration_ms")) / 1000.0)
+        self.apply_tool_event(NormalizedToolEvent(cid, kind, str(payload.get("turn_id")) if payload.get("turn_id") else None, "begin", start, duration, "legacy", 2))
+
+    def end_tool(self, typ: str, payload: dict[str, Any], ts: Optional[float]) -> None:
+        kind = self.TOOL_END_TYPES.get(typ, "tool")
+        cid = self.call_id(payload, f"{typ}:{self.seq}")
+        end = self.event_time(payload, ("completed_at_ms",), ts)
+        duration = parse_duration_seconds(payload.get("duration"))
+        if payload.get("duration_ms") is not None:
+            duration = max(0.0, as_num(payload.get("duration_ms")) / 1000.0)
+        self.apply_tool_event(NormalizedToolEvent(cid, kind, str(payload.get("turn_id")) if payload.get("turn_id") else None, "end", end, duration, "legacy", 2))
 
     def feed(self, obj: dict[str, Any]) -> None:
         self.seq += 1
@@ -775,7 +870,7 @@ class RolloutParser:
             self.end_tool(typ, payload, ts)
         elif typ == "response_item":
             self.response_item(payload, ts)
-        elif typ in self.RESPONSE_TOOL_TYPES or typ == "message":
+        elif typ in self.RESPONSE_TOOL_TYPES or typ in self.RESPONSE_TOOL_OUTPUT_TYPES or typ == "message":
             self.response_item(payload, ts)
         elif typ in {"item_started", "item_completed", "item_updated"}:
             self.item_event(typ, payload, ts)
@@ -818,6 +913,7 @@ class RolloutParser:
             context_window=turn.context_window or self.context_window,
             current_context_tokens=self.current_context_tokens,
             exact_response_count=turn.exact_response_count,
+            usage_pending=(turn.exact_response_count == 0 and not turn.token_usage_seen),
         )
 
     def session_metrics(self, active_file: bool) -> ViewMetrics:
@@ -867,6 +963,7 @@ class RolloutParser:
             context_window=self.context_window,
             current_context_tokens=self.current_context_tokens,
             exact_response_count=exact_count,
+            usage_pending=(exact_count == 0 and self.token_usage_events == 0),
         )
 
 
@@ -1039,23 +1136,124 @@ def clamp_window_position(x: int, y: int, width: int, height: int) -> tuple[int,
     return max(left + margin, min(int(x), max_x)), max(top + margin, min(int(y), max_y))
 
 
-def find_latest_rollout(codex_home: Path) -> Optional[Path]:
-    candidates: list[tuple[float, Path]] = []
-    for base in (codex_home / "sessions", codex_home / "archived_sessions"):
-        if not base.exists():
+@dataclass
+class RolloutCandidate:
+    path: Path
+    source: str = ""
+    originator: str = ""
+    thread_id: str = ""
+    session_id: str = ""
+    task_started_ts: Optional[float] = None
+    last_event_ts: Optional[float] = None
+    eligible: bool = False
+    priority: int = 0
+    archived: bool = False
+
+
+def _candidate_metadata(path: Path, archived: bool = False) -> RolloutCandidate:
+    candidate = RolloutCandidate(path=path, archived=archived)
+    try:
+        stat = path.stat()
+        candidate.last_event_ts = stat.st_mtime
+        size = stat.st_size
+    except OSError:
+        return candidate
+    try:
+        with path.open("rb") as handle:
+            head = handle.read(min(64 * 1024, size))
+            if size > 64 * 1024:
+                handle.seek(max(0, size - 128 * 1024))
+                tail = handle.read(128 * 1024)
+            else:
+                tail = head
+    except OSError:
+        return candidate
+    lines = head.splitlines() + tail.splitlines()
+    seen: set[bytes] = set()
+    for raw in lines:
+        if raw in seen:
             continue
+        seen.add(raw)
         try:
-            for p in base.rglob("rollout-*.jsonl"):
-                try:
-                    candidates.append((p.stat().st_mtime, p))
-                except OSError:
-                    pass
-        except OSError:
-            pass
-    if not candidates:
-        return None
-    candidates.sort(key=lambda x: x[0], reverse=True)
-    return candidates[0][1]
+            obj = json.loads(raw.decode("utf-8", errors="replace"))
+        except (ValueError, UnicodeDecodeError):
+            continue
+        if not isinstance(obj, dict):
+            continue
+        typ = str(obj.get("type", "") or "").lower()
+        payload = obj.get("payload") if isinstance(obj.get("payload"), dict) else obj
+        if typ == "session_meta":
+            candidate.source = str(payload.get("thread_source") or payload.get("source") or "").strip().lower()
+            candidate.originator = str(payload.get("originator") or "").strip().lower()
+            candidate.thread_id = str(payload.get("thread_id") or payload.get("id") or "")
+            candidate.session_id = str(payload.get("session_id") or "")
+        event_type = str(payload.get("type", "") or "").lower()
+        if event_type in RolloutParser.TURN_START_TYPES:
+            started = parse_ts(payload.get("started_at")) or parse_ts(obj.get("timestamp"))
+            if started is not None:
+                candidate.task_started_ts = max(candidate.task_started_ts or started, started)
+    source_text = f"{candidate.source} {candidate.originator}"
+    if any(word in source_text for word in ("subagent", "sub-agent", "memoryconsolidation", "memory_consolidation", "consolidation")):
+        candidate.eligible = False
+        candidate.priority = 0
+    elif candidate.source in {"user", "root", "main"}:
+        candidate.eligible = True
+        candidate.priority = 3
+    elif not candidate.source and any(name in candidate.originator for name in ("codex", "vscode", "tui")):
+        candidate.eligible = True
+        candidate.priority = 1
+    return candidate
+
+
+class RootThreadSelector:
+    """Select a stable root user rollout and ignore subagent sessions."""
+
+    def __init__(self) -> None:
+        self.current: Optional[Path] = None
+        self.reason = "initial"
+
+    def candidates(self, codex_home: Path) -> list[RolloutCandidate]:
+        active: list[RolloutCandidate] = []
+        for base, archived in ((codex_home / "sessions", False), (codex_home / "archived_sessions", True)):
+            if not base.exists():
+                continue
+            try:
+                for path in base.rglob("rollout-*.jsonl"):
+                    active.append(_candidate_metadata(path, archived))
+            except OSError:
+                continue
+            if any(candidate.eligible for candidate in active) and not archived:
+                break
+        return [candidate for candidate in active if candidate.eligible]
+
+    @staticmethod
+    def rank(candidate: RolloutCandidate) -> tuple[int, float, float]:
+        return (candidate.priority, candidate.task_started_ts or 0.0, candidate.last_event_ts or 0.0)
+
+    def choose(self, codex_home: Path) -> Optional[Path]:
+        candidates = self.candidates(codex_home)
+        if not candidates:
+            self.current = None
+            self.reason = "no eligible root user thread"
+            return None
+        by_path = {candidate.path: candidate for candidate in candidates}
+        current = by_path.get(self.current) if self.current else None
+        best = max(candidates, key=self.rank)
+        if current is not None:
+            if best.path != current.path and (best.task_started_ts or 0.0) > (current.task_started_ts or 0.0):
+                self.current = best.path
+                self.reason = "newer root task_started"
+            else:
+                self.reason = "kept current root thread"
+        else:
+            self.current = best.path
+            self.reason = "selected eligible root thread"
+        return self.current
+
+
+def find_latest_rollout(codex_home: Path) -> Optional[Path]:
+    """Compatibility helper: choose an eligible root rollout once."""
+    return RootThreadSelector().choose(codex_home)
 
 
 def diagnostic(parsed: ParsedRollout, m: ViewMetrics) -> str:
@@ -1071,8 +1269,13 @@ def diagnostic(parsed: ParsedRollout, m: ViewMetrics) -> str:
         bits.append(f"reasoning {fmt_num(m.usage.reasoning_output_tokens)}")
     if m.exact_response_count:
         bits.append(f"精确 response usage ×{m.exact_response_count}")
+    elif m.usage_pending:
+        bits.append("token=pending")
     else:
         bits.append("token=累计差值")
+    if parsed.parser.tool_timing_sources:
+        source_text = ", ".join(f"{key}:{value}" for key, value in sorted(parsed.parser.tool_timing_sources.items()))
+        bits.append(f"timing={source_text}")
     return " · ".join(bits)
 
 
@@ -1177,8 +1380,11 @@ def run_gui(args: argparse.Namespace) -> int:
 
     cache: dict[str, Any] = {"path": None, "parsed": None, "metrics": None}
     reader = IncrementalRolloutReader()
+    selector = RootThreadSelector()
 
     def compact_text(m: ViewMetrics) -> str:
+        if m.usage_pending:
+            return f"{tr(lang, 'cache')} --  ·  {tr(lang, 'input')} --  ·  {tr(lang, 'output')} --"
         hit = m.usage.cache_hit; hit_text = f"{hit:.0f}%" if hit is not None else "--"
         return f"{tr(lang, 'cache')} {hit_text}  ·  {tr(lang, 'input')} {fmt_num(m.usage.input_tokens)}  ·  {tr(lang, 'output')} {fmt_num(m.usage.output_tokens)}"
 
@@ -1191,6 +1397,7 @@ def run_gui(args: argparse.Namespace) -> int:
         bits.append((f"Exact response usage ×{m.exact_response_count}" if m.exact_response_count else "token=cumulative delta") if lang == "en" else (f"精确 response usage ×{m.exact_response_count}" if m.exact_response_count else "token=累计差值"))
         if parsed.parse_errors: bits.append((f"Ignored {parsed.parse_errors} invalid JSON lines" if lang == "en" else f"忽略 {parsed.parse_errors} 行无效 JSON"))
         if args.debug: bits.append(path.name)
+        if args.debug and selector.reason: bits.append(f"thread={selector.reason}")
         return "  ·  ".join(bits)
 
     def render(force_resize: bool = False) -> None:
@@ -1269,7 +1476,7 @@ def run_gui(args: argparse.Namespace) -> int:
         if not tray_state["quit"]: root.after(100, pump_tray)
 
     def refresh() -> None:
-        p = fixed_file if fixed_file else find_latest_rollout(codex_home)
+        p = fixed_file if fixed_file else selector.choose(codex_home)
         if p is None or not p.exists():
             if cache.get("path") is not None or cache.get("parsed") is not None:
                 cache.update(path=None, parsed=None, metrics=None); render(True)

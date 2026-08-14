@@ -17,12 +17,12 @@
 
 ## 下载
 
-从 [Releases](https://github.com/wenyuan05/codex-token-overlay/releases) 下载 `CodexTokenOverlay-v0.1.0-windows-x64.exe`。它是免安装、未签名的 Windows x64 EXE，首次运行可能出现 SmartScreen 提示。
+从 [Releases](https://github.com/wenyuan05/codex-token-overlay/releases) 下载 `CodexTokenOverlay-v0.2.0-windows-x64.exe`。它是免安装、未签名的 Windows x64 EXE，首次运行可能出现 SmartScreen 提示。
 
 可用 `SHA256SUMS.txt` 校验：
 
 ```powershell
-Get-FileHash .\CodexTokenOverlay-v0.1.0-windows-x64.exe -Algorithm SHA256
+Get-FileHash .\CodexTokenOverlay-v0.2.0-windows-x64.exe -Algorithm SHA256
 ```
 
 双击 EXE 即可运行。托盘菜单提供显示/隐藏、开机启动、统计范围切换和退出。开机启动默认关闭，启用后只写入当前用户注册表；拖动悬浮窗后位置会跨重启保留。
@@ -60,6 +60,9 @@ Set-ExecutionPolicy -Scope Process Bypass
 - 缓存命中率 = `cached_input_tokens / input_tokens`。
 - 本轮优先使用精确的 `raw_response_completed` usage，否则使用累计值差分。
 - 工具耗时使用区间并集，并发工具不会重复计时。
+- 工具事件统一兼容 response-item call/output、legacy begin/end，以及未来的 `item_started/item_completed` wrapper。
+- 自动选择最新的合格 root user thread，并排除 subagent/memory consolidation；`--file` 可强制指定 rollout。
+- Codex 尚未持久化 `token_count` 或 response usage 时，Token 会显示为待定，而不是误报为 0。
 
 ## 许可证
 
