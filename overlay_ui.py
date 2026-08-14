@@ -314,6 +314,14 @@ def run_gui(args: Any) -> int:
         persist_ui()
         build_context_menu()
         draw_ui()
+        # pystray may cache labels on Windows; force the native tray menu to
+        # re-evaluate its dynamic text/checked callbacks after a language
+        # selection changes.
+        if tray_icon["icon"] is not None:
+            try:
+                tray_icon["icon"].update_menu()
+            except Exception:
+                pass
 
     def quit_app(_event: Any = None) -> None:
         persist_ui()
