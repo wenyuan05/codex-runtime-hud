@@ -179,5 +179,49 @@ class HudTests(unittest.TestCase):
             ]), encoding="utf-8")
             self.assertEqual(RootThreadSelector().choose(home), p)
 
+    def test_selector_scans_task_started_in_middle_of_large_rollout(self):
+        with tempfile.TemporaryDirectory() as td:
+            home = Path(td)
+            sessions = home / "sessions"
+            sessions.mkdir()
+
+            stale = sessions / "rollout-stale.jsonl"
+            stale.write_text("\n".join([
+                json.dumps({"type": "session_meta", "payload": {"thread_source": "user", "originator": "Codex Desktop"}}),
+                json.dumps({"type": "event_msg", "payload": {"type": "task_started", "started_at": 200}}),
+            ]), encoding="utf-8")
+
+            large = sessions / "rollout-large.jsonl"
+            with large.open("w", encoding="utf-8", newline="\n") as handle:
+                handle.write(json.dumps({"type": "session_meta", "payload": {"thread_source": "user", "originator": "Codex Desktop"}}) + "\n")
+                handle.write(json.dumps({"type": "event_msg", "payload": {"type": "task_started", "started_at": 100}}) + "\n")
+                handle.writelines(json.dumps({"type": "message", "payload": {"text": "x" * 240}}) + "\n" for _ in range(500))
+                # This turn is deliberately outside the old head/tail sample.
+                handle.write(json.dumps({"type": "event_msg", "payload": {"type": "task_started", "started_at": 300}}) + "\n")
+                handle.writelines(json.dumps({"type": "message", "payload": {"text": "y" * 240}}) + "\n" for _ in range(700))
+
+            selector = RootThreadSelector()
+            self.assertEqual(selector.choose(home), large)
+            candidate = next(item for item in selector.candidates(home) if item.path == large)
+            self.assertEqual(candidate.task_started_ts, 300)
+
+    def test_selector_metadata_cache_reads_appended_turn(self):
+        with tempfile.TemporaryDirectory() as td:
+            home = Path(td)
+            sessions = home / "sessions"
+            sessions.mkdir()
+            path = sessions / "rollout-live.jsonl"
+            path.write_text("\n".join([
+                json.dumps({"type": "session_meta", "payload": {"thread_source": "user", "originator": "Codex Desktop"}}),
+                json.dumps({"type": "event_msg", "payload": {"type": "task_started", "started_at": 100}}),
+            ]) + "\n", encoding="utf-8")
+
+            selector = RootThreadSelector()
+            self.assertEqual(selector.choose(home), path)
+            with path.open("a", encoding="utf-8", newline="\n") as handle:
+                handle.write(json.dumps({"type": "event_msg", "payload": {"type": "task_started", "started_at": 200}}) + "\n")
+            candidate = next(item for item in selector.candidates(home) if item.path == path)
+            self.assertEqual(candidate.task_started_ts, 200)
+
 if __name__ == "__main__":
     unittest.main()

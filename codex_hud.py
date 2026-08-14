@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Codex Token Overlay v0.3.0
+Codex Token Overlay v0.3.1
 
 Read-only floating HUD for Codex Desktop / Codex CLI rollout JSONL files.
 
@@ -50,7 +50,7 @@ def codex_home_default() -> Path:
 
 
 APP_NAME = "CodexTokenOverlay"
-APP_VERSION = "0.3.0"
+APP_VERSION = "0.3.1"
 
 
 def app_data_dir() -> Path:
@@ -1186,48 +1186,17 @@ class RolloutCandidate:
     archived: bool = False
 
 
-def _candidate_metadata(path: Path, archived: bool = False) -> RolloutCandidate:
-    candidate = RolloutCandidate(path=path, archived=archived)
-    try:
-        stat = path.stat()
-        candidate.last_event_ts = stat.st_mtime
-        size = stat.st_size
-    except OSError:
-        return candidate
-    try:
-        with path.open("rb") as handle:
-            head = handle.read(min(64 * 1024, size))
-            if size > 64 * 1024:
-                handle.seek(max(0, size - 128 * 1024))
-                tail = handle.read(128 * 1024)
-            else:
-                tail = head
-    except OSError:
-        return candidate
-    lines = head.splitlines() + tail.splitlines()
-    seen: set[bytes] = set()
-    for raw in lines:
-        if raw in seen:
-            continue
-        seen.add(raw)
-        try:
-            obj = json.loads(raw.decode("utf-8", errors="replace"))
-        except (ValueError, UnicodeDecodeError):
-            continue
-        if not isinstance(obj, dict):
-            continue
-        typ = str(obj.get("type", "") or "").lower()
-        payload = obj.get("payload") if isinstance(obj.get("payload"), dict) else obj
-        if typ == "session_meta":
-            candidate.source = str(payload.get("thread_source") or payload.get("source") or "").strip().lower()
-            candidate.originator = str(payload.get("originator") or "").strip().lower()
-            candidate.thread_id = str(payload.get("thread_id") or payload.get("id") or "")
-            candidate.session_id = str(payload.get("session_id") or "")
-        event_type = str(payload.get("type", "") or "").lower()
-        if event_type in RolloutParser.TURN_START_TYPES:
-            started = parse_ts(payload.get("started_at")) or parse_ts(obj.get("timestamp"))
-            if started is not None:
-                candidate.task_started_ts = max(candidate.task_started_ts or started, started)
+@dataclass
+class _CandidateMetadataState:
+    candidate: RolloutCandidate
+    file_id: Optional[tuple[int, int, int]] = None
+    offset: int = 0
+    tail: bytes = b""
+
+
+def _finalize_candidate(candidate: RolloutCandidate) -> RolloutCandidate:
+    candidate.eligible = False
+    candidate.priority = 0
     source_text = f"{candidate.source} {candidate.originator}"
     if any(word in source_text for word in ("subagent", "sub-agent", "memoryconsolidation", "memory_consolidation", "consolidation")):
         candidate.eligible = False
@@ -1241,12 +1210,101 @@ def _candidate_metadata(path: Path, archived: bool = False) -> RolloutCandidate:
     return candidate
 
 
+def _feed_candidate_line(candidate: RolloutCandidate, raw: bytes) -> None:
+    raw = raw.strip()
+    if not raw:
+        return
+    try:
+        obj = json.loads(raw.decode("utf-8", errors="replace"))
+    except (ValueError, UnicodeDecodeError):
+        return
+    if not isinstance(obj, dict):
+        return
+    typ = str(obj.get("type", "") or "").lower()
+    payload = obj.get("payload") if isinstance(obj.get("payload"), dict) else obj
+    if typ == "session_meta":
+        candidate.source = str(payload.get("thread_source") or payload.get("source") or "").strip().lower()
+        candidate.originator = str(payload.get("originator") or "").strip().lower()
+        candidate.thread_id = str(payload.get("thread_id") or payload.get("id") or "")
+        candidate.session_id = str(payload.get("session_id") or "")
+    event_type = str(payload.get("type", "") or "").lower()
+    if event_type in RolloutParser.TURN_START_TYPES:
+        started = parse_ts(payload.get("started_at")) or parse_ts(obj.get("timestamp"))
+        if started is not None:
+            candidate.task_started_ts = max(candidate.task_started_ts or started, started)
+
+
+def _candidate_metadata(path: Path, archived: bool = False) -> RolloutCandidate:
+    """Read all lightweight session metadata once without retaining content."""
+    state = _CandidateMetadataState(RolloutCandidate(path=path, archived=archived))
+    _read_candidate_metadata(path, archived, state)
+    return state.candidate
+
+
+def _read_candidate_metadata(path: Path, archived: bool, state: _CandidateMetadataState) -> RolloutCandidate:
+    candidate = state.candidate
+    candidate.path = path
+    candidate.archived = archived
+    try:
+        stat = path.stat()
+        candidate.last_event_ts = stat.st_mtime
+    except OSError:
+        return _finalize_candidate(candidate)
+
+    file_id = (
+        int(getattr(stat, "st_dev", 0)),
+        int(getattr(stat, "st_ino", 0)),
+        int(getattr(stat, "st_ctime_ns", 0)),
+    )
+    if state.file_id != file_id or stat.st_size < state.offset:
+        state.candidate = RolloutCandidate(path=path, archived=archived)
+        candidate = state.candidate
+        state.file_id = file_id
+        state.offset = 0
+        state.tail = b""
+        candidate.last_event_ts = stat.st_mtime
+
+    try:
+        with path.open("rb") as handle:
+            handle.seek(state.offset)
+            chunk = handle.read()
+            state.offset = handle.tell()
+    except OSError:
+        return _finalize_candidate(candidate)
+
+    data = state.tail + chunk
+    lines = data.split(b"\n")
+    state.tail = lines.pop()
+    for raw in lines:
+        _feed_candidate_line(candidate, raw.rstrip(b"\r"))
+
+    # Metadata can be read from a complete final line even when the writer has
+    # not appended a newline. Keep genuinely incomplete JSON for the next pass.
+    if state.tail.strip():
+        _feed_candidate_line(candidate, state.tail)
+        try:
+            json.loads(state.tail.decode("utf-8", errors="replace"))
+        except (ValueError, UnicodeDecodeError):
+            pass
+        else:
+            state.tail = b""
+    return _finalize_candidate(candidate)
+
+
 class RootThreadSelector:
     """Select a stable root user rollout and ignore subagent sessions."""
 
     def __init__(self) -> None:
         self.current: Optional[Path] = None
         self.reason = "initial"
+        self._metadata_cache: dict[Path, _CandidateMetadataState] = {}
+
+    def _metadata(self, path: Path, archived: bool) -> RolloutCandidate:
+        state = self._metadata_cache.get(path)
+        if state is None:
+            state = _CandidateMetadataState(RolloutCandidate(path=path, archived=archived))
+            self._metadata_cache[path] = state
+        return _read_candidate_metadata(path, archived, state)
 
     def candidates(self, codex_home: Path) -> list[RolloutCandidate]:
         active: list[RolloutCandidate] = []
@@ -1255,7 +1313,7 @@ class RootThreadSelector:
                 continue
             try:
                 for path in base.rglob("rollout-*.jsonl"):
-                    active.append(_candidate_metadata(path, archived))
+                    active.append(self._metadata(path, archived))
             except OSError:
                 continue
             if any(candidate.eligible for candidate in active) and not archived:

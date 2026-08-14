@@ -18,12 +18,12 @@ A small Windows always-on-top HUD for Codex Desktop / Codex CLI token usage. It 
 
 ## Download
 
-Download `CodexTokenOverlay-v0.3.0-windows-x64.exe` from [Releases](https://github.com/wenyuan05/codex-token-overlay/releases). It is a portable, unsigned Windows x64 executable; SmartScreen may show a first-run warning.
+Download `CodexTokenOverlay-v0.3.1-windows-x64.exe` from [Releases](https://github.com/wenyuan05/codex-token-overlay/releases). It is a portable, unsigned Windows x64 executable; SmartScreen may show a first-run warning.
 
 Verify the download with `SHA256SUMS.txt`:
 
 ```powershell
-Get-FileHash .\CodexTokenOverlay-v0.3.0-windows-x64.exe -Algorithm SHA256
+Get-FileHash .\CodexTokenOverlay-v0.3.1-windows-x64.exe -Algorithm SHA256
 ```
 
 Double-click the EXE. The compact HUD shows only scope, Cache, In and Out; click the body to expand the detailed panel. Click Current/Session to switch scope without expanding. Drag from the background to move it; a right-click opens the native menu for scope, Always on top, startup, language, reset position, copy and Quit. The tray icon provides Show/Hide, scope, Start with Windows, Language (Auto/English/Simplified Chinese), About and Quit. Startup is opt-in and uses the current user's registry only. Position and UI preferences persist across launches.
@@ -63,6 +63,7 @@ The result is `dist\CodexTokenOverlay.exe` plus `dist\SHA256SUMS.txt`. The same 
 - Tool time is an interval union, so overlapping tools are not double-counted.
 - Tool events are normalized from response-item call/output pairs, legacy begin/end events, and future `item_started/item_completed` wrappers.
 - Automatic selection follows the latest eligible root user thread and excludes subagent/memory-consolidation sessions; `--file` overrides selection.
+- Large rollouts are scanned incrementally for turn metadata, so a newer turn in the middle of a file is not mistaken for stale startup data.
 - Token usage may remain pending until Codex persists a `token_count` or response-usage event.
 
 ## License
