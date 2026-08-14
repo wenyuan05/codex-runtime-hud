@@ -1,0 +1,62 @@
+name: Windows build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test-and-build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: py -3 -m pip install -r requirements-build.txt
+      - name: Unit tests
+        run: py -3 -m unittest -v
+      - name: Build single-file EXE
+        shell: pwsh
+        run: ./build.ps1
+      - name: CLI smoke test
+        shell: pwsh
+        run: ./dist/CodexTokenOverlay.exe --once --file ./sample_rollout.jsonl --lang en
+      - name: Upload EXE artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: CodexTokenOverlay-windows-x64
+          path: |
+            dist/CodexTokenOverlay.exe
+            dist/SHA256SUMS.txt
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: test-and-build
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: CodexTokenOverlay-windows-x64
+          path: dist
+      - name: Rename release asset
+        shell: pwsh
+        run: |
+          $target = "CodexTokenOverlay-${{ github.ref_name }}-windows-x64.exe"
+          Rename-Item dist/CodexTokenOverlay.exe $target
+          $hash = (Get-FileHash "dist/$target" -Algorithm SHA256).Hash.ToLowerInvariant()
+          Set-Content dist/SHA256SUMS.txt -Encoding utf8 "$hash  $target"
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/CodexTokenOverlay-${{ github.ref_name }}-windows-x64.exe
+            dist/SHA256SUMS.txt
+          generate_release_notes: true

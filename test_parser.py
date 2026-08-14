@@ -1,0 +1,93 @@
+import json
+import tempfile
+import unittest
+from pathlib import Path
+
+from codex_hud import IncrementalRolloutReader, parse_rollout, resolve_language
+
+ROWS = [{'timestamp': '2026-08-14T00:00:00Z', 'type': 'event_msg', 'payload': {'type': 'task_started', 'turn_id': 't1', 'started_at': 1786665600, 'model_context_window': 200000}}, {'timestamp': '2026-08-14T00:00:00.1Z', 'type': 'event_msg', 'payload': {'type': 'thread_settings_applied', 'thread_settings': {'model': 'gpt-5.6-luna'}}}, {'timestamp': '2026-08-14T00:00:03Z', 'type': 'event_msg', 'payload': {'type': 'raw_response_completed', 'response_id': 'r1', 'token_usage': {'input_tokens': 100000, 'cached_input_tokens': 95000, 'cache_write_input_tokens': 0, 'output_tokens': 5000, 'reasoning_output_tokens': 1000, 'total_tokens': 106000}}}, {'timestamp': '2026-08-14T00:00:10Z', 'type': 'event_msg', 'payload': {'type': 'token_count', 'info': {'total_token_usage': {'input_tokens': 100000, 'cached_input_tokens': 95000, 'cache_write_input_tokens': 0, 'output_tokens': 5000, 'reasoning_output_tokens': 1000, 'total_tokens': 106000}, 'last_token_usage': {'input_tokens': 100000, 'cached_input_tokens': 95000, 'cache_write_input_tokens': 0, 'output_tokens': 5000, 'reasoning_output_tokens': 1000, 'total_tokens': 106000}, 'model_context_window': 200000}, 'rate_limits': None}}, {'timestamp': '2026-08-14T00:00:10Z', 'type': 'event_msg', 'payload': {'type': 'task_complete', 'turn_id': 't1', 'started_at': 1786665600, 'completed_at': 1786665610, 'duration_ms': 10000, 'time_to_first_token_ms': 900, 'last_agent_message': 'done'}}, {'timestamp': '2026-08-14T00:01:00Z', 'type': 'event_msg', 'payload': {'type': 'task_started', 'turn_id': 't2', 'started_at': 1786665660, 'model_context_window': 200000}}, {'timestamp': '2026-08-14T00:01:02Z', 'type': 'event_msg', 'payload': {'type': 'exec_command_begin', 'call_id': 'c1', 'turn_id': 't2', 'started_at_ms': 1786665662000, 'command': ['git', 'status'], 'cwd': '.'}}, {'timestamp': '2026-08-14T00:01:03Z', 'type': 'event_msg', 'payload': {'type': 'mcp_tool_call_begin', 'call_id': 'c2', 'turn_id': 't2', 'invocation': {'server': 'x', 'tool': 'read', 'arguments': {}}}}, {'timestamp': '2026-08-14T00:01:05Z', 'type': 'event_msg', 'payload': {'type': 'exec_command_end', 'call_id': 'c1', 'turn_id': 't2', 'completed_at_ms': 1786665665000, 'command': ['git', 'status'], 'cwd': '.'}}, {'timestamp': '2026-08-14T00:01:07Z', 'type': 'event_msg', 'payload': {'type': 'mcp_tool_call_end', 'call_id': 'c2', 'turn_id': 't2', 'duration': '4s', 'result': {'Ok': {}}}}, {'timestamp': '2026-08-14T00:01:15Z', 'type': 'event_msg', 'payload': {'type': 'raw_response_completed', 'response_id': 'r2', 'token_usage': {'input_tokens': 20000, 'cached_input_tokens': 18000, 'cache_write_input_tokens': 0, 'output_tokens': 2000, 'reasoning_output_tokens': 300, 'total_tokens': 22300}}}, {'timestamp': '2026-08-14T00:01:20Z', 'type': 'event_msg', 'payload': {'type': 'token_count', 'info': {'total_token_usage': {'input_tokens': 120000, 'cached_input_tokens': 113000, 'cache_write_input_tokens': 0, 'output_tokens': 7000, 'reasoning_output_tokens': 1300, 'total_tokens': 128300}, 'last_token_usage': {'input_tokens': 20000, 'cached_input_tokens': 18000, 'cache_write_input_tokens': 0, 'output_tokens': 2000, 'reasoning_output_tokens': 300, 'total_tokens': 22300}, 'model_context_window': 200000}, 'rate_limits': None}}, {'timestamp': '2026-08-14T00:01:20Z', 'type': 'event_msg', 'payload': {'type': 'task_complete', 'turn_id': 't2', 'started_at': 1786665660, 'completed_at': 1786665680, 'duration_ms': 20000, 'time_to_first_token_ms': 800, 'last_agent_message': 'done'}}]
+
+class HudTests(unittest.TestCase):
+    def test_latest_turn_scope_and_task_aliases(self):
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / "rollout-test.jsonl"
+            p.write_text("\n".join(json.dumps(x) for x in ROWS), encoding="utf-8")
+            parsed = parse_rollout(p)
+
+            turn = parsed.metrics("turn")
+            self.assertEqual(turn.model, "gpt-5.6-luna")
+            self.assertEqual(turn.rounds, 1)
+            self.assertEqual(turn.steps, 2)
+            self.assertEqual(turn.usage.input_tokens, 20000)
+            self.assertEqual(turn.usage.cached_input_tokens, 18000)
+            self.assertEqual(turn.usage.output_tokens, 2000)
+            self.assertAlmostEqual(turn.usage.cache_hit, 90.0, places=1)
+            self.assertAlmostEqual(turn.wall_seconds, 20.0, places=2)
+            # Tool intervals: exec [2,5], MCP [3,7] => union [2,7] = 5s
+            self.assertAlmostEqual(turn.tool_seconds, 5.0, places=2)
+            self.assertAlmostEqual(turn.llm_seconds_est, 15.0, places=2)
+            self.assertEqual(turn.ttft_avg_ms, 800)
+
+            session = parsed.metrics("session")
+            self.assertEqual(session.rounds, 2)
+            self.assertEqual(session.steps, 2)
+            self.assertEqual(session.usage.input_tokens, 120000)
+            self.assertEqual(session.usage.output_tokens, 7000)
+
+    def test_current_turn_falls_back_to_cumulative_delta(self):
+        rows = [
+            {"timestamp":"2026-08-14T00:00:00Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1000,"cached_input_tokens":800,"output_tokens":100,"reasoning_output_tokens":0,"total_tokens":1100},"last_token_usage":{"input_tokens":1000,"cached_input_tokens":800,"output_tokens":100,"reasoning_output_tokens":0,"total_tokens":1100},"model_context_window":10000},"rate_limits":None}},
+            {"timestamp":"2026-08-14T00:00:01Z","type":"event_msg","payload":{"type":"task_started","turn_id":"x","started_at":1786665601,"model_context_window":10000}},
+            {"timestamp":"2026-08-14T00:00:04Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1500,"cached_input_tokens":1200,"output_tokens":180,"reasoning_output_tokens":0,"total_tokens":1680},"last_token_usage":{"input_tokens":500,"cached_input_tokens":400,"output_tokens":80,"reasoning_output_tokens":0,"total_tokens":580},"model_context_window":10000},"rate_limits":None}},
+            {"timestamp":"2026-08-14T00:00:05Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"x","started_at":1786665601,"completed_at":1786665605,"duration_ms":4000,"time_to_first_token_ms":500}},
+        ]
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / "rollout-fallback.jsonl"
+            p.write_text("\n".join(json.dumps(x) for x in rows), encoding="utf-8")
+            m = parse_rollout(p).metrics("turn")
+            self.assertEqual(m.usage.input_tokens, 500)
+            self.assertEqual(m.usage.cached_input_tokens, 400)
+            self.assertEqual(m.usage.output_tokens, 80)
+
+    def test_incremental_reader_matches_full_parse_and_handles_partial_line(self):
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / "rollout-incremental.jsonl"
+            first = "\n".join(json.dumps(x) for x in ROWS[:5]) + "\n"
+            p.write_text(first, encoding="utf-8")
+            reader = IncrementalRolloutReader()
+            initial = reader.read(p)
+            self.assertEqual(initial.metrics("session").rounds, 1)
+            with p.open("ab") as f:
+                f.write(json.dumps(ROWS[5]).encode("utf-8"))
+            partial = reader.read(p)
+            self.assertEqual(partial.metrics("session").rounds, 1)
+            with p.open("ab") as f:
+                f.write(b"\n" + json.dumps(ROWS[6]).encode("utf-8") + b"\n")
+            updated = reader.read(p)
+            self.assertEqual(updated.metrics("session").rounds, 2)
+            self.assertEqual(updated.metrics("turn").steps, 1)
+            full = parse_rollout(p)
+            self.assertEqual(updated.metrics("session").usage.output_tokens, full.metrics("session").usage.output_tokens)
+
+    def test_incremental_reader_resets_on_truncate_and_counts_complete_invalid_line(self):
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / "rollout-reset.jsonl"
+            p.write_text(json.dumps(ROWS[0]) + "\n", encoding="utf-8")
+            reader = IncrementalRolloutReader()
+            reader.read(p)
+            with p.open("a", encoding="utf-8") as f:
+                f.write("not-json\n")
+            bad = reader.read(p)
+            self.assertEqual(bad.parse_errors, 1)
+            p.write_text(json.dumps(ROWS[5]) + "\n", encoding="utf-8")
+            reset = reader.read(p)
+            self.assertEqual(reset.parse_errors, 0)
+            self.assertEqual(reset.metrics("session").rounds, 1)
+
+    def test_language_resolution(self):
+        self.assertEqual(resolve_language("zh-CN"), "zh-CN")
+        self.assertEqual(resolve_language("en"), "en")
+        self.assertIn(resolve_language("auto"), {"zh-CN", "en"})
+
+if __name__ == "__main__":
+    unittest.main()
