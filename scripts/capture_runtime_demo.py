@@ -15,6 +15,8 @@ OUT = ROOT / "assets" / "codex-runtime-hud-demo.gif"
 user32 = ctypes.windll.user32
 MOUSEEVENTF_LEFTDOWN = 0x0002
 MOUSEEVENTF_LEFTUP = 0x0004
+TRANSPARENT_RGB = (1, 1, 1)
+DEMO_BACKGROUND = (27, 27, 29)
 
 
 def find_window(title: str) -> int:
@@ -38,7 +40,14 @@ def grab(hwnd: int):
     rect = wintypes.RECT()
     user32.GetWindowRect(hwnd, ctypes.byref(rect))
     print("window", hwnd, rect.left, rect.top, rect.right, rect.bottom)
-    return ImageGrab.grab(window=hwnd).convert("RGB")
+    image = ImageGrab.grab(window=hwnd).convert("RGB")
+    # ImageGrab(window=...) reads the Tk backing surface and therefore sees
+    # the Windows transparent-color key.  Replace that capture-only color so
+    # the repository GIF shows the same rounded silhouette users see on the
+    # desktop, without leaking the key color into the demo.
+    pixels = [DEMO_BACKGROUND if pixel == TRANSPARENT_RGB else pixel for pixel in image.getdata()]
+    image.putdata(pixels)
+    return image
 
 
 def click_window(hwnd: int, x: int, y: int) -> None:
@@ -71,7 +80,7 @@ def main() -> int:
         frames.append(grab(hwnd))
         width = max(frame.width for frame in frames)
         height = max(frame.height for frame in frames)
-        canvas = [Image.new("RGB", (width, height), (27, 27, 29)) for _ in frames]
+        canvas = [Image.new("RGB", (width, height), DEMO_BACKGROUND) for _ in frames]
         canvas[0].paste(frames[0], (0, 0)); canvas[1].paste(frames[1], (0, 0))
         canvas[0].save(OUT, save_all=True, append_images=[canvas[1]], duration=[1200, 1800], loop=0, optimize=True)
         print(OUT)

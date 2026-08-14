@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import math
 import queue
+import sys
 import threading
 from pathlib import Path
 from typing import Any, Optional
@@ -18,7 +19,6 @@ def run_gui(args: Any) -> int:
         import tkinter as tk
     except Exception as exc:
         from codex_runtime_hud import tr
-        import sys
         print(tr(args.lang, "tk_missing"), file=sys.stderr)
         print(exc, file=sys.stderr)
         return 2
@@ -64,19 +64,36 @@ def run_gui(args: Any) -> int:
     FG = "#f2f2f3"
     SECONDARY = "#a5a5aa"
     MUTED = "#6f6f75"
-    ACCENT = "#9bb2d2"
+    ACCENT = "#e2bd68"
     WARNING = "#b99b6a"
     DANGER = "#ad6f76"
     UI = ("Segoe UI Variable", 10)
     UI_SMALL = ("Segoe UI Variable", 9)
     UI_TINY = ("Segoe UI Variable", 8)
     MONO = ("Cascadia Mono", 10)
+    # Tk has no native rounded, borderless window primitive.  On Windows the
+    # transparent-color window attribute gives the canvas a real rounded
+    # silhouette: the key color in the four corners is removed by the window
+    # manager instead of merely being painted to look rounded.
+    # Keep the key close to black so unsupported screenshot paths do not leak
+    # a loud chroma color; it is removed by the Windows window manager.
+    CORNER_KEY = "#010101"
+    window_bg = BG
 
     root = tk.Tk()
     root.title(tr(lang, "title"))
-    root.configure(bg=BG)
+    root.configure(bg=window_bg)
     root.overrideredirect(True)
     root.resizable(False, False)
+    if sys.platform == "win32":
+        try:
+            root.configure(bg=CORNER_KEY)
+            root.wm_attributes("-transparentcolor", CORNER_KEY)
+            window_bg = CORNER_KEY
+        except tk.TclError:
+            # Some Tcl/Tk builds do not expose transparentcolor.  The HUD
+            # remains fully usable with a painted background in that case.
+            root.configure(bg=BG)
     topmost_var = tk.BooleanVar(value=state["always_on_top"])
     language_var = tk.StringVar(value=language_mode)
     try:
@@ -84,7 +101,7 @@ def run_gui(args: Any) -> int:
     except Exception:
         pass
 
-    canvas = tk.Canvas(root, bg=BG, bd=0, highlightthickness=0, cursor="hand2")
+    canvas = tk.Canvas(root, bg=window_bg, bd=0, highlightthickness=0, cursor="hand2")
     canvas.pack(fill="both", expand=True)
     cache: dict[str, Any] = {"path": None, "parsed": None, "metrics": None}
     reader = IncrementalRolloutReader()
@@ -164,8 +181,11 @@ def run_gui(args: Any) -> int:
         width, height = window_size()
         canvas.delete("all")
         canvas.configure(width=width, height=height)
-        rounded_rect(1, 1, width - 1, height - 1, 10, SURFACE)
-        canvas.create_rectangle(1, 10, 2, height - 10, fill=BORDER, outline="")
+        # Two concentric silhouettes create a crisp one-pixel frame while the
+        # transparent canvas corners remain outside the window body.
+        rounded_rect(1, 1, width - 1, height - 1, 14, BORDER)
+        rounded_rect(2, 2, width - 2, height - 2, 13, SURFACE)
+        canvas.create_rectangle(2, 12, 3, height - 12, fill=ACCENT, outline="")
         parsed = cache.get("parsed")
         path = cache.get("path")
         metrics = cache.get("metrics")
