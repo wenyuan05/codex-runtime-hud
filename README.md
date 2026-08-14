@@ -36,7 +36,7 @@ Python 3.10+ with Tk is required:
 py -3 -m pip install -r requirements-runtime.txt
 py -3 codex_hud.py
 py -3 codex_hud.py --once --debug
-py -3 codex_hud.py --once --file .\sample_rollout.jsonl --lang en
+py -3 codex_hud.py --once --file .\examples\sample_rollout.jsonl --lang en
 ```
 
 Language defaults to the Windows UI language (`zh-*` → Simplified Chinese, otherwise English). Override with `--lang auto`, `--lang zh-CN` or `--lang en`.
@@ -47,7 +47,7 @@ On Windows PowerShell:
 
 ```powershell
 Set-ExecutionPolicy -Scope Process Bypass
-.\build.ps1
+.\scripts\build.ps1
 ```
 
 The result is `dist\CodexTokenOverlay.exe` plus `dist\SHA256SUMS.txt`. The same checks run in GitHub Actions.
@@ -69,3 +69,12 @@ The result is `dist\CodexTokenOverlay.exe` plus `dist\SHA256SUMS.txt`. The same 
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+## Repository layout
+
+- `codex_hud.py`, `overlay_ui.py`, `icon_assets.py`: application source.
+- `tests/`: parser, icon and UI-settings unit tests.
+- `scripts/`: build, launcher and demo-capture scripts.
+- `packaging/`: PyInstaller spec and Windows version metadata.
+- `docs/releases/`: versioned release notes.
+- `examples/`: safe sample rollout used by tests and CLI smoke tests.

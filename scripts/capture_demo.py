@@ -43,7 +43,7 @@ def main() -> int:
     if sys.platform != "win32":
         print("Windows only", file=sys.stderr)
         return 2
-    proc = subprocess.Popen([sys.executable, str(ROOT / "codex_hud.py"), "--file", str(ROOT / "sample_rollout.jsonl"), "--lang", "en"])
+    proc = subprocess.Popen([sys.executable, str(ROOT / "codex_hud.py"), "--file", str(ROOT / "examples" / "sample_rollout.jsonl"), "--lang", "en"])
     try:
         hwnd = 0
         for _ in range(40):

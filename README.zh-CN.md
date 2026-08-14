@@ -36,7 +36,7 @@ Get-FileHash .\CodexTokenOverlay-v0.3.1-windows-x64.exe -Algorithm SHA256
 py -3 -m pip install -r requirements-runtime.txt
 py -3 codex_hud.py
 py -3 codex_hud.py --once --debug
-py -3 codex_hud.py --once --file .\sample_rollout.jsonl --lang en
+py -3 codex_hud.py --once --file .\examples\sample_rollout.jsonl --lang en
 ```
 
 默认根据 Windows UI 语言选择界面（`zh-*` → 简体中文，其余 → English）。也可以使用 `--lang auto`、`--lang zh-CN` 或 `--lang en` 覆盖。
@@ -47,7 +47,7 @@ py -3 codex_hud.py --once --file .\sample_rollout.jsonl --lang en
 
 ```powershell
 Set-ExecutionPolicy -Scope Process Bypass
-.\build.ps1
+.\scripts\build.ps1
 ```
 
 产物为 `dist\CodexTokenOverlay.exe` 和 `dist\SHA256SUMS.txt`；GitHub Actions 会执行相同检查。
@@ -69,3 +69,12 @@ Set-ExecutionPolicy -Scope Process Bypass
 ## 许可证
 
 MIT，详见 [LICENSE](LICENSE)。
+
+## 仓库目录
+
+- `codex_hud.py`、`overlay_ui.py`、`icon_assets.py`：应用源码。
+- `tests/`：解析器、图标和 UI 设置单元测试。
+- `scripts/`：构建、启动和 GIF 采集脚本。
+- `packaging/`：PyInstaller spec 和 Windows 版本元数据。
+- `docs/releases/`：按版本归档的发布说明。
+- `examples/`：测试与 CLI smoke test 使用的安全 sample rollout。

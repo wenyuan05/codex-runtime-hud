@@ -20,13 +20,13 @@ jobs:
       - name: Install dependencies
         run: py -3 -m pip install -r requirements-build.txt
       - name: Unit tests
-        run: py -3 -m unittest -v
+        run: py -3 -m unittest discover -s tests -v
       - name: Build single-file EXE
         shell: pwsh
-        run: ./build.ps1
+        run: ./scripts/build.ps1
       - name: CLI smoke test
         shell: pwsh
-        run: ./dist/CodexTokenOverlay.exe --once --file ./sample_rollout.jsonl --lang en
+        run: ./dist/CodexTokenOverlay.exe --once --file ./examples/sample_rollout.jsonl --lang en
       - name: Upload EXE artifact
         uses: actions/upload-artifact@v4
         with:
@@ -59,4 +59,4 @@ jobs:
           files: |
             dist/CodexTokenOverlay-${{ github.ref_name }}-windows-x64.exe
             dist/SHA256SUMS.txt
-          body_path: RELEASE_NOTES_${{ github.ref_name }}.md
+          body_path: docs/releases/RELEASE_NOTES_${{ github.ref_name }}.md
