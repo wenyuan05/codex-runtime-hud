@@ -492,6 +492,9 @@ def run_gui(args: Any) -> int:
             root.after(100, pump_tray)
 
     pump_tray()
-    refresh()
+    # Let Tk map the window before scanning the session tree.  On machines
+    # with many rollout files this keeps the first paint responsive; the
+    # normal refresh loop still starts immediately after the event loop begins.
+    root.after(0, refresh)
     root.mainloop()
     return 0
