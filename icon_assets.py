@@ -15,34 +15,72 @@ def create_icon_image(size: int = 64):
     from PIL import Image, ImageDraw
 
     size = max(16, int(size))
-    image = Image.new("RGBA", (size, size), (27, 27, 29, 255))
+
+    if size == 16:
+        # Explorer's "Small icons" view uses the native 16px ICO frame.  A
+        # downsampled vector mark turns into the blocky shape seen in that
+        # view, so draw this one frame on the pixel grid.  The open right side
+        # is deliberately wide enough to read as a C at 100% scale.
+        image = Image.new("RGBA", (16, 16), (27, 27, 29, 255))
+        draw = ImageDraw.Draw(image)
+        green = (87, 185, 126, 255)
+        white = (255, 255, 255, 255)
+        draw.rounded_rectangle((2, 2, 13, 13), radius=3, fill=green)
+        for y, start, end in (
+            (4, 7, 9),
+            (5, 5, 6),
+            (6, 4, 4),
+            (7, 4, 4),
+            (8, 4, 4),
+            (9, 4, 4),
+            (10, 5, 6),
+            (11, 7, 9),
+        ):
+            draw.line((start, y, end, y), fill=white, width=2)
+        return image
+
+    # Render large and downsample so the curved C keeps a stable, centered
+    # silhouette at all non-native shell sizes.
+    canvas_size = max(64, size * 4)
+    image = Image.new("RGBA", (canvas_size, canvas_size), (27, 27, 29, 255))
     draw = ImageDraw.Draw(image)
 
-    scale = size / 256.0
+    scale = canvas_size / 256.0
     outer = max(1, round(12 * scale))
     radius = max(2, round(52 * scale))
     draw.rounded_rectangle(
-        (outer, outer, size - outer - 1, size - outer - 1),
+        (outer, outer, canvas_size - outer - 1, canvas_size - outer - 1),
         radius=radius,
         fill=(87, 185, 126, 255),
     )
 
-    # A deliberately broad, hand-drawn C.  It is an arc rather than a font
-    # glyph so the white mark survives the 16px shell icon down to its last
-    # pixels.  The right-side gap is enlarged at tiny sizes for clarity.
-    left = round(size * 0.27)
-    top = round(size * 0.20)
-    right = round(size * 0.73)
-    bottom = round(size * 0.80)
-    width = max(2, round(size * 0.13))
-    draw.arc((left, top, right, bottom), start=48, end=312, fill=(255, 255, 255, 255), width=width)
+    # Build the C from concentric ellipses instead of a low-resolution arc.
+    # This gives Windows a stable, symmetric shape to sample at 32px and up.
+    left = round(canvas_size * 0.27)
+    top = round(canvas_size * 0.20)
+    right = round(canvas_size * 0.73)
+    bottom = round(canvas_size * 0.80)
+    stroke = max(2, round(canvas_size * 0.13))
+    green = (87, 185, 126, 255)
+    white = (255, 255, 255, 255)
+    draw.ellipse((left, top, right, bottom), fill=white)
+    draw.ellipse(
+        (left + stroke, top + stroke, right - stroke, bottom - stroke),
+        fill=green,
+    )
 
-    # Square off the arc endpoints into a clean C opening.  The green cover
-    # is intentionally narrow so the white stroke remains dominant at 16px.
-    gap = max(1, round(size * 0.08))
-    cover_x = right - max(1, round(width * 0.35))
-    draw.rectangle((cover_x, top - gap, size, top + gap), fill=(87, 185, 126, 255))
-    draw.rectangle((cover_x, bottom - gap, size, bottom + gap), fill=(87, 185, 126, 255))
+    # Remove a mirrored wedge on the right.  Its diagonal edges become the
+    # two clean C terminals while preserving equal top/bottom spacing.
+    center_y = (top + bottom) / 2.0
+    cut_x = round((left + right) / 2.0 - stroke * 0.15)
+    cut_top = round(center_y - canvas_size * 0.18)
+    cut_bottom = round(center_y + canvas_size * 0.18)
+    wedge_top = round(center_y - canvas_size * 0.37)
+    wedge_bottom = round(center_y + canvas_size * 0.37)
+    draw.polygon(
+        ((cut_x, cut_top), (right + 1, wedge_top),
+         (right + 1, wedge_bottom), (cut_x, cut_bottom)),
+        fill=green,
+    )
 
-    return image
-
+    return image.resize((size, size), Image.Resampling.LANCZOS)
