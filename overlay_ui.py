@@ -50,6 +50,10 @@ def run_gui(args: Any) -> int:
     state: dict[str, Any] = {
         "scope": "session" if args.session else settings.get("scope", "turn"),
         "expanded": bool(settings.get("expanded", False)),
+        # The compact layout has its own anchor.  Keep it separate from the
+        # expanded window's temporary, edge-clamped position so collapsing at
+        # the right/bottom screen edge returns to the original compact spot.
+        "compact_anchor": None,
         "always_on_top": bool(settings.get("always_on_top", True)),
         "language_mode": language_mode,
         "visible": True,
@@ -256,6 +260,8 @@ def run_gui(args: Any) -> int:
 
     def persist_ui() -> None:
         try:
+            if not state["expanded"]:
+                state["compact_anchor"] = (int(root.winfo_x()), int(root.winfo_y()))
             settings.update({
                 "x": int(root.winfo_x()),
                 "y": int(root.winfo_y()),
@@ -274,6 +280,8 @@ def run_gui(args: Any) -> int:
         default_x = left + screen_w - width - 24
         x, y = clamp_tk_position(int(settings.get("x", default_x)), int(settings.get("y", top + 24)), width, height)
         root.geometry(f"{width}x{height}+{x}+{y}")
+        if not state["expanded"]:
+            state["compact_anchor"] = (x, y)
 
     def set_visible(visible: bool) -> None:
         state["visible"] = bool(visible)
@@ -285,10 +293,24 @@ def run_gui(args: Any) -> int:
             root.withdraw()
 
     def set_expanded(expanded: bool, persist: bool = True) -> None:
-        state["expanded"] = bool(expanded)
+        expanded = bool(expanded)
+        was_expanded = bool(state["expanded"])
+        if expanded and not was_expanded:
+            state["compact_anchor"] = (int(root.winfo_x()), int(root.winfo_y()))
+        state["expanded"] = expanded
         draw_ui()
-        x, y = clamp_tk_position(root.winfo_x(), root.winfo_y(), *window_size())
+        root.update_idletasks()
+        if was_expanded and not expanded and state["compact_anchor"] is not None:
+            # Restore against the compact layout, not the expanded layout's
+            # clamped left/top coordinate.  This is what keeps a HUD parked
+            # at the right edge from appearing to collapse toward the left.
+            x, y = state["compact_anchor"]
+        else:
+            x, y = root.winfo_x(), root.winfo_y()
+        x, y = clamp_tk_position(x, y, *window_size())
         root.geometry(f"{window_size()[0]}x{window_size()[1]}+{x}+{y}")
+        if not expanded:
+            state["compact_anchor"] = (x, y)
         if persist:
             persist_ui()
 
