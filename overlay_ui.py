@@ -419,7 +419,10 @@ def run_gui(args: Any) -> int:
         root.after_idle(refresh_once)
 
     def session_row_text(candidate: RolloutCandidate) -> str:
-        activity = tr(lang, "session_active") if candidate.is_active() else tr(lang, "session_idle")
+        if candidate.is_active():
+            activity = tr(lang, "session_waiting") if candidate.is_waiting_for_update() else tr(lang, "session_active")
+        else:
+            activity = tr(lang, "session_idle")
         return f"{candidate.display_name()}  ·  {activity}"
 
     def show_session_picker() -> None:

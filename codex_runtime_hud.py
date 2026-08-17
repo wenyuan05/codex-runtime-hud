@@ -157,6 +157,7 @@ TRANSLATIONS = {
         "sessions_manual": "手动选择",
         "sessions_none": "没有可选会话",
         "session_active": "活跃",
+        "session_waiting": "运行中（等待更新）",
         "session_idle": "空闲",
         "session_picker_title": "选择会话",
         "no_data": "—",
@@ -200,6 +201,7 @@ TRANSLATIONS = {
         "sessions_manual": "Manual selection",
         "sessions_none": "No selectable sessions",
         "session_active": "Active",
+        "session_waiting": "Running (waiting for update)",
         "session_idle": "Idle",
         "session_picker_title": "Select session",
         "no_data": "—",
@@ -1230,6 +1232,7 @@ class RolloutCandidate:
     session_id: str = ""
     task_started_ts: Optional[float] = None
     last_event_ts: Optional[float] = None
+    open_turn_ids: set[str] = field(default_factory=set)
     eligible: bool = False
     priority: int = 0
     archived: bool = False
@@ -1257,9 +1260,24 @@ class RolloutCandidate:
         return f"{self.project_name} · {self.short_id}"
 
     def is_active(self, now: Optional[float] = None) -> bool:
-        if self.last_event_ts is None:
+        """A session stays active until its latest turn completes or aborts.
+
+        Codex can spend a long time reasoning or waiting for a tool without
+        appending JSONL. File mtime therefore is not a reliable live-state
+        signal; it remains available as ``last_event_ts`` for sorting only.
+        """
+        return bool(self.open_turn_ids)
+
+    def is_waiting_for_update(self, now: Optional[float] = None, grace_seconds: float = 120.0) -> bool:
+        """Return true for an open turn whose rollout has gone quiet.
+
+        This is deliberately distinct from idle: an absent completion event
+        means the local data still describes an open turn, but the user should
+        be able to spot potentially stale interrupted sessions in the list.
+        """
+        if not self.is_active() or self.last_event_ts is None:
             return False
-        return (time.time() if now is None else now) - self.last_event_ts < 15.0
+        return (time.time() if now is None else now) - self.last_event_ts >= grace_seconds
 
 
 @dataclass
@@ -1309,6 +1327,17 @@ def _feed_candidate_line(candidate: RolloutCandidate, raw: bytes) -> None:
         started = parse_ts(payload.get("started_at")) or parse_ts(obj.get("timestamp"))
         if started is not None:
             candidate.task_started_ts = max(candidate.task_started_ts or started, started)
+        turn_id = str(payload.get("turn_id") or f"turn:{started or candidate.task_started_ts or 0}")
+        candidate.open_turn_ids.add(turn_id)
+    elif event_type in RolloutParser.TURN_END_TYPES or event_type in RolloutParser.TURN_ABORT_TYPES:
+        turn_id = str(payload.get("turn_id") or "")
+        if turn_id:
+            candidate.open_turn_ids.discard(turn_id)
+        else:
+            # The older wire shape can omit turn_id on completion. A root
+            # rollout has at most one foreground turn, so completion closes
+            # the remaining lifecycle state rather than relying on mtime.
+            candidate.open_turn_ids.clear()
 
 
 def _candidate_metadata(path: Path, archived: bool = False) -> RolloutCandidate:

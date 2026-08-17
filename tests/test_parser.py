@@ -260,6 +260,25 @@ class HudTests(unittest.TestCase):
             self.assertEqual(fallback.mode, "auto")
             self.assertEqual(fallback.candidate.path.name, "rollout-newest-thread-9999.jsonl")
 
+    def test_candidate_activity_follows_turn_lifecycle_not_file_mtime(self):
+        with tempfile.TemporaryDirectory() as td:
+            home = Path(td)
+            sessions = home / "sessions"
+            sessions.mkdir()
+            path = sessions / "rollout-live.jsonl"
+            path.write_text("\n".join([
+                json.dumps({"type": "session_meta", "payload": {"thread_source": "user", "originator": "Codex Desktop"}}),
+                json.dumps({"type": "event_msg", "payload": {"type": "task_started", "turn_id": "running", "started_at": 100}}),
+            ]) + "\n", encoding="utf-8")
+            selector = RootThreadSelector()
+            candidate = selector.candidates(home)[0]
+            self.assertTrue(candidate.is_active(now=999999))
+            self.assertTrue(candidate.is_waiting_for_update(now=candidate.last_event_ts + 120))
+            with path.open("a", encoding="utf-8", newline="\n") as handle:
+                handle.write(json.dumps({"type": "event_msg", "payload": {"type": "task_complete", "turn_id": "running", "completed_at": 101}}) + "\n")
+            candidate = selector.candidates(home)[0]
+            self.assertFalse(candidate.is_active())
+
     def test_incremental_reader_pool_keeps_rollout_state_isolated(self):
         with tempfile.TemporaryDirectory() as td:
             base = Path(td)
