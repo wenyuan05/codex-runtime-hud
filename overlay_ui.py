@@ -24,9 +24,10 @@ def run_gui(args: Any) -> int:
         return 2
 
     from codex_runtime_hud import (
-        IncrementalRolloutReader,
+        IncrementalReaderPool,
         ParsedRollout,
-        RootThreadSelector,
+        RolloutCandidate,
+        SessionSelection,
         ViewMetrics,
         codex_home_default,
         fmt_num,
@@ -56,10 +57,15 @@ def run_gui(args: Any) -> int:
         "compact_anchor": None,
         "always_on_top": bool(settings.get("always_on_top", True)),
         "language_mode": language_mode,
+        "session_selection_mode": settings.get("session_selection_mode", "auto"),
+        "selected_session_key": settings.get("selected_session_key", ""),
         "visible": True,
     }
     if state["scope"] not in {"turn", "session"}:
         state["scope"] = "turn"
+    if state["session_selection_mode"] not in {"auto", "manual"}:
+        state["session_selection_mode"] = "auto"
+        state["selected_session_key"] = ""
 
     BG = "#18181a"
     SURFACE = "#1c1c1f"
@@ -107,15 +113,17 @@ def run_gui(args: Any) -> int:
 
     canvas = tk.Canvas(root, bg=window_bg, bd=0, highlightthickness=0, cursor="hand2")
     canvas.pack(fill="both", expand=True)
-    cache: dict[str, Any] = {"path": None, "parsed": None, "metrics": None}
-    reader = IncrementalRolloutReader()
-    selector = RootThreadSelector()
+    cache: dict[str, Any] = {"path": None, "parsed": None, "metrics": None, "candidate": None, "candidates": []}
+    readers = IncrementalReaderPool(max_readers=4)
+    sessions = SessionSelection()
     scope_bounds = (0, 0, 0, 0)
+    session_bounds = (0, 0, 0, 0)
     drag: dict[str, Any] = {"offset_x": 0, "offset_y": 0, "press_x": 0, "press_y": 0, "moved": False, "target": "body"}
     tray_queue: queue.Queue[str] = queue.Queue()
     tray_icon: dict[str, Any] = {"icon": None}
     tray_state: dict[str, Any] = {"quit": False}
     context_menu: Optional[tk.Menu] = None
+    session_popup: Optional[tk.Toplevel] = None
 
     def tk_screen_bounds() -> tuple[int, int, int, int]:
         """Use Tk's logical virtual-screen coordinates for DPI-safe placement."""
@@ -184,7 +192,7 @@ def run_gui(args: Any) -> int:
         }
 
     def draw_ui() -> None:
-        nonlocal scope_bounds
+        nonlocal scope_bounds, session_bounds
         width, height = window_size()
         canvas.delete("all")
         canvas.configure(width=width, height=height)
@@ -199,6 +207,13 @@ def run_gui(args: Any) -> int:
         values = metric_values(parsed, metrics)
 
         if state["expanded"]:
+            session_w, session_h = 108, 24
+            session_x, session_y = 14, 8
+            session_bounds = (session_x, session_y, session_x + session_w, session_y + session_h)
+            button_fill = SURFACE_2 if fixed_file is None else "#242428"
+            rounded_rect(session_x, session_y, session_x + session_w, session_y + session_h, 7, button_fill, ("sessions",))
+            mode_text = tr(lang, "sessions_auto") if state["session_selection_mode"] == "auto" else tr(lang, "sessions_manual")
+            draw_text(session_x + session_w / 2, session_y + 12, tr(lang, "sessions"), UI_TINY, FG if fixed_file is None else MUTED, "center", ("sessions",))
             scope_w, scope_h = 96, 24
             scope_x, scope_y = width - scope_w - 14, 10
             scope_bounds = (scope_x, scope_y, scope_x + scope_w, scope_y + scope_h)
@@ -210,15 +225,17 @@ def run_gui(args: Any) -> int:
             draw_text(scope_x + half + half // 2, scope_y + 12, tr(lang, "session"), UI_TINY, FG if state["scope"] == "session" else MUTED, "center", ("scope",))
 
             model = metrics.model if metrics and metrics.model and args.model else "Codex"
-            canvas.create_oval(16, 14, 22, 20, fill=ACCENT if metrics and metrics.active else MUTED, outline="")
-            draw_text(29, 17, model, ("Segoe UI Variable", 11), FG)
-            draw_text(29, 32, tr(lang, "model_active") if metrics and metrics.active else tr(lang, "model_idle"), UI_TINY, SECONDARY)
+            canvas.create_oval(16, 39, 22, 45, fill=ACCENT if metrics and metrics.active else MUTED, outline="")
+            draw_text(29, 42, model, ("Segoe UI Variable", 11), FG)
+            candidate = cache.get("candidate")
+            session_name = candidate.display_name() if candidate is not None else tr(lang, "not_found")
+            draw_text(16, 56, f"{session_name} · {mode_text}", UI_TINY, SECONDARY)
             if args.debug and path is not None:
-                draw_text(16, 44, path.name, UI_TINY, MUTED)
+                draw_text(16, 68, path.name, UI_TINY, MUTED)
 
             for x, (label, value) in zip((18, 132, 246), ((tr(lang, "cache"), values["cache"]), ("In", values["input"]), ("Out", values["output"]))):
-                draw_text(x, 62, label, UI_TINY, SECONDARY)
-                draw_text(x, 79, value, ("Cascadia Mono", 13), FG)
+                draw_text(x, 78, label, UI_TINY, SECONDARY)
+                draw_text(x, 95, value, ("Cascadia Mono", 13), FG)
 
             runtime = (
                 (tr(lang, "steps"), values["steps"]),
@@ -230,21 +247,26 @@ def run_gui(args: Any) -> int:
             )
             for index, (label, value) in enumerate(runtime):
                 x = 18 + (index % 3) * 114
-                y = 112 + (index // 3) * 31
+                y = 126 + (index // 3) * 31
                 draw_text(x, y, label, UI_TINY, MUTED)
                 draw_text(x, y + 14, value, MONO, SECONDARY)
 
             context_text, pct = format_context(metrics, parsed is None or metrics is None)
-            draw_text(18, 192, tr(lang, "context"), UI_TINY, MUTED)
-            bar_x, bar_y, bar_w = 78, 189, 224
+            draw_text(18, 204, tr(lang, "context"), UI_TINY, MUTED)
+            bar_x, bar_y, bar_w = 78, 201, 224
             rounded_rect(bar_x, bar_y, bar_x + bar_w, bar_y + 5, 3, "#303035")
             if pct is not None and pct > 0:
                 bar_color = DANGER if pct > 90 else WARNING if pct >= 70 else "#7f8998"
                 rounded_rect(bar_x, bar_y, bar_x + max(3, int(bar_w * pct / 100.0)), bar_y + 5, 3, bar_color)
-            draw_text(width - 18, 192, context_text, UI_TINY, SECONDARY, "e")
+            draw_text(width - 18, 204, context_text, UI_TINY, SECONDARY, "e")
             if args.debug and path is not None and parsed is not None and metrics is not None:
-                draw_text(18, 207, f"errors={parsed.parse_errors} · coverage={metrics.tool_timing_coverage*100:.0f}%", UI_TINY, MUTED)
+                draw_text(18, 210, f"errors={parsed.parse_errors} · coverage={metrics.tool_timing_coverage*100:.0f}%", UI_TINY, MUTED)
         else:
+            session_w, session_h = 72, 24
+            session_x, session_y = 10, 8
+            session_bounds = (session_x, session_y, session_x + session_w, session_y + session_h)
+            rounded_rect(session_x, session_y, session_x + session_w, session_y + session_h, 7, SURFACE_2, ("sessions",))
+            draw_text(session_x + session_w / 2, session_y + 12, tr(lang, "sessions"), UI_TINY, FG if fixed_file is None else MUTED, "center", ("sessions",))
             scope_w, scope_h = 72, 24
             scope_x, scope_y = width - scope_w - 10, 8
             scope_bounds = (scope_x, scope_y, scope_x + scope_w, scope_y + scope_h)
@@ -269,6 +291,8 @@ def run_gui(args: Any) -> int:
                 "scope": state["scope"],
                 "language": state["language_mode"],
                 "always_on_top": bool(state["always_on_top"]),
+                "session_selection_mode": state["session_selection_mode"],
+                "selected_session_key": state["selected_session_key"],
             })
             save_settings(settings)
         except Exception:
@@ -364,9 +388,90 @@ def run_gui(args: Any) -> int:
         # selection changes.
         if tray_icon["icon"] is not None:
             try:
-                tray_icon["icon"].update_menu()
+                refresh_tray_menu()
             except Exception:
                 pass
+
+    def refresh_tray_menu() -> None:
+        """Replaced after pystray starts; keeps non-tray runs harmless."""
+
+    def close_session_picker() -> None:
+        nonlocal session_popup
+        if session_popup is not None:
+            try:
+                session_popup.destroy()
+            except Exception:
+                pass
+        session_popup = None
+
+    def set_session_auto() -> None:
+        state["session_selection_mode"] = "auto"
+        state["selected_session_key"] = ""
+        persist_ui()
+        close_session_picker()
+        root.after_idle(refresh_once)
+
+    def set_session_manual(key: str) -> None:
+        state["session_selection_mode"] = "manual"
+        state["selected_session_key"] = key
+        persist_ui()
+        close_session_picker()
+        root.after_idle(refresh_once)
+
+    def session_row_text(candidate: RolloutCandidate) -> str:
+        activity = tr(lang, "session_active") if candidate.is_active() else tr(lang, "session_idle")
+        return f"{candidate.display_name()}  ·  {activity}"
+
+    def show_session_picker() -> None:
+        nonlocal session_popup
+        if fixed_file is not None:
+            return
+        if session_popup is not None:
+            close_session_picker()
+            return
+        candidates = cache.get("candidates", [])
+        popup = tk.Toplevel(root)
+        session_popup = popup
+        popup.title(tr(lang, "session_picker_title"))
+        popup.configure(bg=SURFACE)
+        popup.overrideredirect(True)
+        popup.attributes("-topmost", state["always_on_top"])
+        frame = tk.Frame(popup, bg=SURFACE, highlightbackground=BORDER, highlightthickness=1)
+        frame.pack(fill="both", expand=True)
+        header = tk.Label(frame, text=tr(lang, "session_picker_title"), bg=SURFACE, fg=FG, font=UI)
+        header.pack(fill="x", padx=12, pady=(10, 4))
+        auto_active = state["session_selection_mode"] == "auto"
+        auto = tk.Button(frame, text=("● " if auto_active else "○ ") + tr(lang, "sessions_auto"), command=set_session_auto,
+                         anchor="w", relief="flat", bd=0, bg=SURFACE_2, activebackground="#30343b", fg=FG, activeforeground=FG,
+                         font=UI_SMALL, padx=12, pady=6)
+        auto.pack(fill="x", padx=8, pady=(0, 6))
+        holder = tk.Frame(frame, bg=SURFACE)
+        holder.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+        list_canvas = tk.Canvas(holder, bg=SURFACE, bd=0, highlightthickness=0, width=316, height=min(240, max(34, len(candidates) * 34)))
+        scrollbar = tk.Scrollbar(holder, orient="vertical", command=list_canvas.yview)
+        rows = tk.Frame(list_canvas, bg=SURFACE)
+        rows_window = list_canvas.create_window((0, 0), window=rows, anchor="nw")
+        list_canvas.configure(yscrollcommand=scrollbar.set)
+        list_canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        rows.bind("<Configure>", lambda _e: list_canvas.configure(scrollregion=list_canvas.bbox("all")))
+        list_canvas.bind("<Configure>", lambda e: list_canvas.itemconfigure(rows_window, width=e.width))
+        if not candidates:
+            tk.Label(rows, text=tr(lang, "sessions_none"), bg=SURFACE, fg=MUTED, anchor="w", font=UI_SMALL, padx=12, pady=8).pack(fill="x")
+        for candidate in candidates:
+            selected = state["session_selection_mode"] == "manual" and state["selected_session_key"] == candidate.key
+            text = ("● " if selected else "○ ") + session_row_text(candidate)
+            tk.Button(rows, text=text, command=lambda key=candidate.key: set_session_manual(key), anchor="w", relief="flat", bd=0,
+                      bg=SURFACE_2 if selected else SURFACE, activebackground="#30343b", fg=FG, activeforeground=FG,
+                      font=UI_SMALL, padx=10, pady=6).pack(fill="x", pady=1)
+        popup.bind("<Escape>", lambda _e: close_session_picker())
+        popup.bind("<FocusOut>", lambda _e: popup.after(100, lambda: close_session_picker() if session_popup is popup and not popup.focus_displayof() else None))
+        popup.update_idletasks()
+        x = root.winfo_x()
+        y = root.winfo_y() + root.winfo_height() + 6
+        x, y = clamp_tk_position(x, y, popup.winfo_reqwidth(), popup.winfo_reqheight())
+        popup.geometry(f"+{x}+{y}")
+        popup.focus_force()
 
     def quit_app(_event: Any = None) -> None:
         persist_ui()
@@ -396,6 +501,7 @@ def run_gui(args: Any) -> int:
         context_menu = tk.Menu(root, tearoff=False)
         context_menu.add_command(label=tr(lang, "current"), command=lambda: set_scope_value("turn"))
         context_menu.add_command(label=tr(lang, "session"), command=lambda: set_scope_value("session"))
+        context_menu.add_command(label=tr(lang, "sessions"), command=show_session_picker, state="normal" if fixed_file is None else "disabled")
         context_menu.add_separator()
         context_menu.add_checkbutton(label=tr(lang, "topmost"), variable=topmost_var, command=lambda: set_topmost(topmost_var.get()))
         context_menu.add_checkbutton(label=tr(lang, "startup"), command=lambda: set_startup_enabled(not startup_enabled()))
@@ -412,7 +518,9 @@ def run_gui(args: Any) -> int:
 
     def on_press(event: Any) -> None:
         in_scope = scope_bounds[0] <= event.x <= scope_bounds[2] and scope_bounds[1] <= event.y <= scope_bounds[3]
-        drag.update(offset_x=event.x_root - root.winfo_x(), offset_y=event.y_root - root.winfo_y(), press_x=event.x_root, press_y=event.y_root, moved=False, target="scope" if in_scope else "body")
+        in_sessions = session_bounds[0] <= event.x <= session_bounds[2] and session_bounds[1] <= event.y <= session_bounds[3]
+        target = "sessions" if in_sessions else "scope" if in_scope else "body"
+        drag.update(offset_x=event.x_root - root.winfo_x(), offset_y=event.y_root - root.winfo_y(), press_x=event.x_root, press_y=event.y_root, moved=False, target=target)
 
     def on_move(event: Any) -> None:
         if max(abs(event.x_root - drag["press_x"]), abs(event.y_root - drag["press_y"])) >= 5:
@@ -425,6 +533,8 @@ def run_gui(args: Any) -> int:
             persist_ui()
         elif drag["target"] == "scope":
             toggle_scope()
+        elif drag["target"] == "sessions":
+            show_session_picker()
         else:
             toggle_expanded()
         return "break"
@@ -434,13 +544,29 @@ def run_gui(args: Any) -> int:
         cache["metrics"] = parsed.metrics(state["scope"]) if parsed is not None and path is not None else None
         draw_ui()
 
-    def refresh() -> None:
-        path = fixed_file if fixed_file else selector.choose(codex_home)
+    def refresh_once() -> None:
+        candidate: Optional[RolloutCandidate] = None
+        candidates: list[RolloutCandidate] = []
+        if fixed_file is not None:
+            path = fixed_file
+        else:
+            resolution = sessions.resolve(codex_home, state["session_selection_mode"], state["selected_session_key"])
+            candidate, candidates, path = resolution.candidate, resolution.candidates, resolution.candidate.path if resolution.candidate else None
+            if resolution.mode != state["session_selection_mode"] or resolution.selected_key != state["selected_session_key"]:
+                state["session_selection_mode"] = resolution.mode
+                state["selected_session_key"] = resolution.selected_key
+                persist_ui()
+        cache["candidate"] = candidate
+        cache["candidates"] = candidates
         if path is None or not path.exists():
             cache.update(path=None, parsed=None, metrics=None)
         else:
-            cache.update(path=path, parsed=reader.read(path))
+            cache.update(path=path, parsed=readers.read(path))
         render()
+        refresh_tray_menu()
+
+    def refresh() -> None:
+        refresh_once()
         root.after(max(100, int(args.interval * 1000)), refresh)
 
     canvas.bind("<ButtonPress-1>", on_press)
@@ -468,21 +594,40 @@ def run_gui(args: Any) -> int:
         def tray_action(action: str):
             return lambda icon, item: tray_queue.put(action)
 
-        language_menu = pystray.Menu(
-            pystray.MenuItem(lambda item: tr(lang, "language_auto"), tray_action("language:auto"), checked=lambda item: state["language_mode"] == "auto", radio=True),
-            pystray.MenuItem(lambda item: tr(lang, "language_english"), tray_action("language:en"), checked=lambda item: state["language_mode"] == "en", radio=True),
-            pystray.MenuItem(lambda item: tr(lang, "language_chinese"), tray_action("language:zh-CN"), checked=lambda item: state["language_mode"] == "zh-CN", radio=True),
-        )
-        menu = pystray.Menu(
-            pystray.MenuItem(lambda item: tr(lang, "show"), tray_action("show")),
-            pystray.MenuItem(lambda item: tr(lang, "hide"), tray_action("hide")),
-            pystray.Menu.SEPARATOR,
-            pystray.MenuItem(lambda item: tr(lang, "language"), language_menu),
-            pystray.MenuItem(lambda item: tr(lang, "startup"), tray_action("startup"), checked=lambda item: startup_enabled()),
-            pystray.MenuItem(lambda item: tr(lang, "about"), tray_action("about")),
-            pystray.MenuItem(lambda item: tr(lang, "quit"), tray_action("quit")),
-        )
-        icon = pystray.Icon("CodexRuntimeHUD", image, tr(lang, "title"), menu)
+        def build_tray_menu():
+            language_menu = pystray.Menu(
+                pystray.MenuItem(lambda item: tr(lang, "language_auto"), tray_action("language:auto"), checked=lambda item: state["language_mode"] == "auto", radio=True),
+                pystray.MenuItem(lambda item: tr(lang, "language_english"), tray_action("language:en"), checked=lambda item: state["language_mode"] == "en", radio=True),
+                pystray.MenuItem(lambda item: tr(lang, "language_chinese"), tray_action("language:zh-CN"), checked=lambda item: state["language_mode"] == "zh-CN", radio=True),
+            )
+            session_items = [
+                pystray.MenuItem(lambda item: tr(lang, "sessions_auto"), tray_action("session:auto"), checked=lambda item: state["session_selection_mode"] == "auto", radio=True),
+            ]
+            for candidate in cache.get("candidates", []):
+                session_items.append(pystray.MenuItem(
+                    candidate.display_name(), tray_action(f"session:{candidate.key}"),
+                    checked=lambda item, key=candidate.key: state["session_selection_mode"] == "manual" and state["selected_session_key"] == key,
+                    radio=True,
+                ))
+            return pystray.Menu(
+                pystray.MenuItem(lambda item: tr(lang, "show"), tray_action("show")),
+                pystray.MenuItem(lambda item: tr(lang, "hide"), tray_action("hide")),
+                pystray.Menu.SEPARATOR,
+                pystray.MenuItem(lambda item: tr(lang, "sessions"), pystray.Menu(*session_items), enabled=lambda item: fixed_file is None),
+                pystray.MenuItem(lambda item: tr(lang, "language"), language_menu),
+                pystray.MenuItem(lambda item: tr(lang, "startup"), tray_action("startup"), checked=lambda item: startup_enabled()),
+                pystray.MenuItem(lambda item: tr(lang, "about"), tray_action("about")),
+                pystray.MenuItem(lambda item: tr(lang, "quit"), tray_action("quit")),
+            )
+
+        def refresh_tray_menu() -> None:
+            icon = tray_icon["icon"]
+            if icon is not None:
+                icon.menu = build_tray_menu()
+                icon.title = tr(lang, "title")
+                icon.update_menu()
+
+        icon = pystray.Icon("CodexRuntimeHUD", image, tr(lang, "title"), build_tray_menu())
         tray_icon["icon"] = icon
         threading.Thread(target=icon.run, daemon=True, name="codex-overlay-tray").start()
     except Exception:
@@ -498,6 +643,10 @@ def run_gui(args: Any) -> int:
                     set_visible(False)
                 elif action == "startup":
                     set_startup_enabled(not startup_enabled())
+                elif action == "session:auto":
+                    set_session_auto()
+                elif action.startswith("session:"):
+                    set_session_manual(action.split(":", 1)[1])
                 elif action.startswith("language:"):
                     set_language(action.split(":", 1)[1])
                 elif action == "about":

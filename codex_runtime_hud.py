@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Codex Runtime HUD v0.3.4
+Codex Runtime HUD v0.4.0
 
 Read-only floating HUD for real-time current-turn performance in Codex Desktop / Codex CLI.
 
@@ -33,6 +33,7 @@ import re
 import sys
 import threading
 import time
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -53,7 +54,7 @@ def codex_home_default() -> Path:
 APP_NAME = "CodexRuntimeHUD"
 APP_DISPLAY_NAME = "Codex Runtime HUD"
 LEGACY_APP_NAME = "CodexTokenOverlay"
-APP_VERSION = "0.3.4"
+APP_VERSION = "0.4.0"
 
 
 def app_data_dir() -> Path:
@@ -151,6 +152,13 @@ TRANSLATIONS = {
         "speed": "Speed",
         "reasoning": "Reasoning",
         "context": "Context",
+        "sessions": "会话",
+        "sessions_auto": "自动跟随",
+        "sessions_manual": "手动选择",
+        "sessions_none": "没有可选会话",
+        "session_active": "活跃",
+        "session_idle": "空闲",
+        "session_picker_title": "选择会话",
         "no_data": "—",
         "invalid_rollout": "未找到 rollout JSONL：{home}",
         "tk_missing": "Tkinter 不可用。可先用 --once，或安装带 Tk 的 Python。",
@@ -187,6 +195,13 @@ TRANSLATIONS = {
         "speed": "Speed",
         "reasoning": "Reasoning",
         "context": "Context",
+        "sessions": "Sessions",
+        "sessions_auto": "Follow automatically",
+        "sessions_manual": "Manual selection",
+        "sessions_none": "No selectable sessions",
+        "session_active": "Active",
+        "session_idle": "Idle",
+        "session_picker_title": "Select session",
         "no_data": "—",
         "invalid_rollout": "No rollout JSONL found: {home}",
         "tk_missing": "Tkinter is unavailable. Use --once or install Python with Tk.",
@@ -1118,6 +1133,27 @@ class IncrementalRolloutReader:
         return ParsedRollout(path, self.parser, active, self.parse_errors)
 
 
+class IncrementalReaderPool:
+    """Small LRU pool that keeps rollout parser state isolated per file."""
+
+    def __init__(self, max_readers: int = 4) -> None:
+        self.max_readers = max(1, int(max_readers))
+        self._readers: OrderedDict[Path, IncrementalRolloutReader] = OrderedDict()
+
+    def read(self, path: Path) -> ParsedRollout:
+        reader = self._readers.pop(path, None)
+        if reader is None:
+            reader = IncrementalRolloutReader()
+        self._readers[path] = reader
+        while len(self._readers) > self.max_readers:
+            self._readers.popitem(last=False)
+        return reader.read(path)
+
+    @property
+    def paths(self) -> tuple[Path, ...]:
+        return tuple(self._readers)
+
+
 def executable_path() -> Path:
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve()
@@ -1189,6 +1225,7 @@ class RolloutCandidate:
     path: Path
     source: str = ""
     originator: str = ""
+    cwd: str = ""
     thread_id: str = ""
     session_id: str = ""
     task_started_ts: Optional[float] = None
@@ -1196,6 +1233,33 @@ class RolloutCandidate:
     eligible: bool = False
     priority: int = 0
     archived: bool = False
+
+    @property
+    def key(self) -> str:
+        """Stable local selection key without retaining rollout contents."""
+        if self.thread_id:
+            return f"thread:{self.thread_id}"
+        if self.session_id:
+            return f"session:{self.session_id}"
+        return f"path:{self.path.resolve()}"
+
+    @property
+    def project_name(self) -> str:
+        value = self.cwd.rstrip("\\/")
+        return Path(value).name if value else "Codex"
+
+    @property
+    def short_id(self) -> str:
+        value = self.thread_id or self.session_id
+        return value[:8] if value else self.path.stem.replace("rollout-", "")[:8]
+
+    def display_name(self) -> str:
+        return f"{self.project_name} · {self.short_id}"
+
+    def is_active(self, now: Optional[float] = None) -> bool:
+        if self.last_event_ts is None:
+            return False
+        return (time.time() if now is None else now) - self.last_event_ts < 15.0
 
 
 @dataclass
@@ -1237,6 +1301,7 @@ def _feed_candidate_line(candidate: RolloutCandidate, raw: bytes) -> None:
     if typ == "session_meta":
         candidate.source = str(payload.get("thread_source") or payload.get("source") or "").strip().lower()
         candidate.originator = str(payload.get("originator") or "").strip().lower()
+        candidate.cwd = str(payload.get("cwd") or payload.get("workspace_root") or payload.get("project_path") or "").strip()
         candidate.thread_id = str(payload.get("thread_id") or payload.get("id") or "")
         candidate.session_id = str(payload.get("session_id") or "")
     event_type = str(payload.get("type", "") or "").lower()
@@ -1336,8 +1401,7 @@ class RootThreadSelector:
     def rank(candidate: RolloutCandidate) -> tuple[int, float, float]:
         return (candidate.priority, candidate.task_started_ts or 0.0, candidate.last_event_ts or 0.0)
 
-    def choose(self, codex_home: Path) -> Optional[Path]:
-        candidates = self.candidates(codex_home)
+    def choose_from_candidates(self, candidates: list[RolloutCandidate]) -> Optional[RolloutCandidate]:
         if not candidates:
             self.current = None
             self.reason = "no eligible root user thread"
@@ -1349,12 +1413,54 @@ class RootThreadSelector:
             if best.path != current.path and (best.task_started_ts or 0.0) > (current.task_started_ts or 0.0):
                 self.current = best.path
                 self.reason = "newer root task_started"
-            else:
-                self.reason = "kept current root thread"
-        else:
-            self.current = best.path
-            self.reason = "selected eligible root thread"
-        return self.current
+                return best
+            self.reason = "kept current root thread"
+            return current
+        self.current = best.path
+        self.reason = "selected eligible root thread"
+        return best
+
+    def choose(self, codex_home: Path) -> Optional[Path]:
+        selected = self.choose_from_candidates(self.candidates(codex_home))
+        return selected.path if selected is not None else None
+
+
+@dataclass
+class SessionResolution:
+    candidate: Optional[RolloutCandidate]
+    candidates: list[RolloutCandidate]
+    mode: str
+    selected_key: str = ""
+    reason: str = ""
+
+
+class SessionSelection:
+    """Resolve Auto/Manual HUD selection from eligible local root rollouts."""
+
+    def __init__(self, selector: Optional[RootThreadSelector] = None) -> None:
+        self.selector = selector or RootThreadSelector()
+        self._manual_active = False
+
+    def resolve(self, codex_home: Path, mode: str = "auto", selected_key: str = "") -> SessionResolution:
+        candidates = sorted(self.selector.candidates(codex_home), key=RootThreadSelector.rank, reverse=True)
+        if mode == "manual" and selected_key:
+            chosen = next((candidate for candidate in candidates if candidate.key == selected_key), None)
+            if chosen is not None:
+                self.selector.current = chosen.path
+                self.selector.reason = "manual selected root thread"
+                self._manual_active = True
+                return SessionResolution(chosen, candidates, "manual", selected_key, self.selector.reason)
+            self._manual_active = False
+            self.selector.current = None
+            automatic = self.selector.choose_from_candidates(candidates)
+            return SessionResolution(automatic, candidates, "auto", "", "manual selection unavailable; fell back to auto")
+        if self._manual_active:
+            # Switching back to Auto must select the latest eligible root now,
+            # rather than preserving a session that was previously locked.
+            self.selector.current = None
+            self._manual_active = False
+        automatic = self.selector.choose_from_candidates(candidates)
+        return SessionResolution(automatic, candidates, "auto", "", self.selector.reason)
 
 
 def find_latest_rollout(codex_home: Path) -> Optional[Path]:

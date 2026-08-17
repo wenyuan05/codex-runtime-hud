@@ -18,7 +18,7 @@
 - **不会**读取 `auth.json`、API Key、`.env`、rollout 之外的提示词或凭据。
 - 应用运行时不联网；GitHub、Python、PyInstaller 只用于分发和构建。
 - 设置文件只保存窗口坐标和 UI 偏好：`%LOCALAPPDATA%\CodexRuntimeHUD\settings.json`。
-  UI 偏好包括 `expanded`、`scope`、`language`（`auto`、`en`、`zh-CN`）和 `always_on_top`。`Auto` 跟随 Windows UI 语言；手动选择中英文后会记住该选择，改回 `Auto` 才恢复自动检测。
+  UI 偏好包括 `expanded`、`scope`、`language`（`auto`、`en`、`zh-CN`）、`always_on_top` 和本地会话选择模式。`Auto` 跟随 Windows UI 语言；手动选择中英文后会记住该选择，改回 `Auto` 才恢复自动检测。
 - 现有 `%LOCALAPPDATA%\CodexTokenOverlay\settings.json` 会作为一次性兼容回退读取；之后的新设置写入 `CodexRuntimeHUD` 文件夹。
 
 ## 下载
@@ -31,7 +31,7 @@
 Get-FileHash .\CodexRuntimeHUD.exe -Algorithm SHA256
 ```
 
-双击 EXE 即可运行。折叠 HUD 只显示范围、Cache、In、Out；点击主体展开详细面板。点击“本轮/累计”只切换范围，不会展开。拖动背景区域移动窗口；右键打开原生菜单，可切换范围、始终置顶、开机启动、语言、重置位置、复制和退出。托盘菜单提供显示/隐藏、范围、开机启动、语言（自动/English/简体中文）、关于和退出。开机启动默认关闭，启用后只写入当前用户注册表；位置和 UI 偏好会跨重启保留。
+双击 EXE 即可运行。折叠 HUD 顶部提供“会话”按钮、范围、Cache、In、Out；点击主体展开详细面板。点击“会话”会显示可滚动的本地 root 会话列表。“自动跟随”保留稳定的最新 root 会话策略；手动选择某个会话后，HUD 会锁定它，直到重新选择自动跟随。列表只使用本地 `cwd` 项目目录名和短 thread ID，不读取提示词正文。点击“本轮/累计”只切换范围，不会展开。拖动背景区域移动窗口；右键打开原生菜单，可切换范围、会话、始终置顶、开机启动、语言、重置位置、复制和退出。托盘菜单也提供会话入口，以及显示/隐藏、开机启动、语言（自动/English/简体中文）、关于和退出。开机启动默认关闭，启用后只写入当前用户注册表；位置和 UI 偏好会跨重启保留。
 
 ## 源码运行
 
@@ -60,6 +60,7 @@ Set-ExecutionPolicy -Scope Process Bypass
 ## 操作与指标
 
 - 单击主体或按 Space：展开/收起。
+- 点击“会话”：选择合格的本地 root thread，或切回自动跟随。
 - 拖动主体：移动并保存悬浮窗位置。
 - 点击“本轮/累计”：切换当前轮或当前 session 累计统计。
 - 中键/Ctrl+C：复制当前信息；右键：打开原生设置菜单；Escape：隐藏到托盘。
@@ -67,7 +68,7 @@ Set-ExecutionPolicy -Scope Process Bypass
 - 本轮优先使用精确的 `raw_response_completed` usage，否则使用累计值差分。
 - 工具耗时使用区间并集，并发工具不会重复计时。
 - 工具事件统一兼容 response-item call/output、legacy begin/end，以及未来的 `item_started/item_completed` wrapper。
-- 自动选择最新的合格 root user thread，并排除 subagent/memory consolidation；`--file` 可强制指定 rollout。
+- 自动模式选择最新的合格 root user thread，并排除 subagent/memory consolidation；手动选择会锁定当前会话，切回自动模式后才恢复自动跟随；`--file` 可强制指定 rollout 并覆盖两种模式。
 - 大型 rollout 会增量扫描 turn 元数据，不会因为最新 turn 位于文件中间而在启动时误选旧数据。
 - Codex 尚未持久化 `token_count` 或 response usage 时，Token 会显示为待定，而不是误报为 0。
 

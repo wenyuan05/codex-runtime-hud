@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from codex_runtime_hud import IncrementalRolloutReader, RootThreadSelector, parse_rollout, resolve_language
+from codex_runtime_hud import IncrementalReaderPool, IncrementalRolloutReader, RootThreadSelector, SessionSelection, parse_rollout, resolve_language
 
 ROWS = [{'timestamp': '2026-08-14T00:00:00Z', 'type': 'event_msg', 'payload': {'type': 'task_started', 'turn_id': 't1', 'started_at': 1786665600, 'model_context_window': 200000}}, {'timestamp': '2026-08-14T00:00:00.1Z', 'type': 'event_msg', 'payload': {'type': 'thread_settings_applied', 'thread_settings': {'model': 'gpt-5.6-luna'}}}, {'timestamp': '2026-08-14T00:00:03Z', 'type': 'event_msg', 'payload': {'type': 'raw_response_completed', 'response_id': 'r1', 'token_usage': {'input_tokens': 100000, 'cached_input_tokens': 95000, 'cache_write_input_tokens': 0, 'output_tokens': 5000, 'reasoning_output_tokens': 1000, 'total_tokens': 106000}}}, {'timestamp': '2026-08-14T00:00:10Z', 'type': 'event_msg', 'payload': {'type': 'token_count', 'info': {'total_token_usage': {'input_tokens': 100000, 'cached_input_tokens': 95000, 'cache_write_input_tokens': 0, 'output_tokens': 5000, 'reasoning_output_tokens': 1000, 'total_tokens': 106000}, 'last_token_usage': {'input_tokens': 100000, 'cached_input_tokens': 95000, 'cache_write_input_tokens': 0, 'output_tokens': 5000, 'reasoning_output_tokens': 1000, 'total_tokens': 106000}, 'model_context_window': 200000}, 'rate_limits': None}}, {'timestamp': '2026-08-14T00:00:10Z', 'type': 'event_msg', 'payload': {'type': 'task_complete', 'turn_id': 't1', 'started_at': 1786665600, 'completed_at': 1786665610, 'duration_ms': 10000, 'time_to_first_token_ms': 900, 'last_agent_message': 'done'}}, {'timestamp': '2026-08-14T00:01:00Z', 'type': 'event_msg', 'payload': {'type': 'task_started', 'turn_id': 't2', 'started_at': 1786665660, 'model_context_window': 200000}}, {'timestamp': '2026-08-14T00:01:02Z', 'type': 'event_msg', 'payload': {'type': 'exec_command_begin', 'call_id': 'c1', 'turn_id': 't2', 'started_at_ms': 1786665662000, 'command': ['git', 'status'], 'cwd': '.'}}, {'timestamp': '2026-08-14T00:01:03Z', 'type': 'event_msg', 'payload': {'type': 'mcp_tool_call_begin', 'call_id': 'c2', 'turn_id': 't2', 'invocation': {'server': 'x', 'tool': 'read', 'arguments': {}}}}, {'timestamp': '2026-08-14T00:01:05Z', 'type': 'event_msg', 'payload': {'type': 'exec_command_end', 'call_id': 'c1', 'turn_id': 't2', 'completed_at_ms': 1786665665000, 'command': ['git', 'status'], 'cwd': '.'}}, {'timestamp': '2026-08-14T00:01:07Z', 'type': 'event_msg', 'payload': {'type': 'mcp_tool_call_end', 'call_id': 'c2', 'turn_id': 't2', 'duration': '4s', 'result': {'Ok': {}}}}, {'timestamp': '2026-08-14T00:01:15Z', 'type': 'event_msg', 'payload': {'type': 'raw_response_completed', 'response_id': 'r2', 'token_usage': {'input_tokens': 20000, 'cached_input_tokens': 18000, 'cache_write_input_tokens': 0, 'output_tokens': 2000, 'reasoning_output_tokens': 300, 'total_tokens': 22300}}}, {'timestamp': '2026-08-14T00:01:20Z', 'type': 'event_msg', 'payload': {'type': 'token_count', 'info': {'total_token_usage': {'input_tokens': 120000, 'cached_input_tokens': 113000, 'cache_write_input_tokens': 0, 'output_tokens': 7000, 'reasoning_output_tokens': 1300, 'total_tokens': 128300}, 'last_token_usage': {'input_tokens': 20000, 'cached_input_tokens': 18000, 'cache_write_input_tokens': 0, 'output_tokens': 2000, 'reasoning_output_tokens': 300, 'total_tokens': 22300}, 'model_context_window': 200000}, 'rate_limits': None}}, {'timestamp': '2026-08-14T00:01:20Z', 'type': 'event_msg', 'payload': {'type': 'task_complete', 'turn_id': 't2', 'started_at': 1786665660, 'completed_at': 1786665680, 'duration_ms': 20000, 'time_to_first_token_ms': 800, 'last_agent_message': 'done'}}]
 
@@ -222,6 +222,62 @@ class HudTests(unittest.TestCase):
                 handle.write(json.dumps({"type": "event_msg", "payload": {"type": "task_started", "started_at": 200}}) + "\n")
             candidate = next(item for item in selector.candidates(home) if item.path == path)
             self.assertEqual(candidate.task_started_ts, 200)
+
+    def test_session_selection_manual_lock_and_auto_fallback(self):
+        with tempfile.TemporaryDirectory() as td:
+            home = Path(td)
+            sessions = home / "sessions"
+            sessions.mkdir()
+
+            def write(name, project, started):
+                path = sessions / name
+                path.write_text("\n".join([
+                    json.dumps({"type": "session_meta", "payload": {
+                        "thread_source": "user", "originator": "Codex Desktop", "id": name.removeprefix("rollout-").removesuffix(".jsonl"),
+                        "cwd": f"C:/work/{project}",
+                    }}),
+                    json.dumps({"type": "event_msg", "payload": {"type": "task_started", "started_at": started}}),
+                ]) + "\n", encoding="utf-8")
+                return path
+
+            old_path = write("rollout-old-thread-1234.jsonl", "old-project", 100)
+            new_path = write("rollout-new-thread-5678.jsonl", "new-project", 200)
+            selection = SessionSelection()
+            automatic = selection.resolve(home)
+            self.assertEqual(automatic.candidate.path, new_path)
+            old = next(candidate for candidate in automatic.candidates if candidate.path == old_path)
+            self.assertEqual(old.display_name(), "old-project · old-thre")
+
+            manual = selection.resolve(home, "manual", old.key)
+            self.assertEqual(manual.mode, "manual")
+            self.assertEqual(manual.candidate.path, old_path)
+            write("rollout-newest-thread-9999.jsonl", "newest-project", 300)
+            self.assertEqual(selection.resolve(home, "manual", old.key).candidate.path, old_path)
+            self.assertEqual(selection.resolve(home).candidate.path.name, "rollout-newest-thread-9999.jsonl")
+
+            old_path.unlink()
+            fallback = selection.resolve(home, "manual", old.key)
+            self.assertEqual(fallback.mode, "auto")
+            self.assertEqual(fallback.candidate.path.name, "rollout-newest-thread-9999.jsonl")
+
+    def test_incremental_reader_pool_keeps_rollout_state_isolated(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            first = base / "rollout-first.jsonl"
+            second = base / "rollout-second.jsonl"
+            def rows(turn_id, response_id, output_tokens):
+                return [
+                    {"timestamp": 1000, "type": "event_msg", "payload": {"type": "task_started", "turn_id": turn_id, "started_at": 1000}},
+                    {"timestamp": 1001, "type": "event_msg", "payload": {"type": "raw_response_completed", "response_id": response_id, "token_usage": {"input_tokens": 10, "output_tokens": output_tokens, "total_tokens": 10 + output_tokens}}},
+                    {"timestamp": 1002, "type": "event_msg", "payload": {"type": "task_complete", "turn_id": turn_id, "completed_at": 1002}},
+                ]
+            first.write_text("\n".join(json.dumps(row) for row in rows("first", "first-response", 5)) + "\n", encoding="utf-8")
+            second.write_text("\n".join(json.dumps(row) for row in rows("second", "second-response", 2)) + "\n", encoding="utf-8")
+            readers = IncrementalReaderPool(max_readers=2)
+            self.assertEqual(readers.read(first).metrics("turn").usage.output_tokens, 5)
+            self.assertEqual(readers.read(second).metrics("turn").usage.output_tokens, 2)
+            self.assertEqual(readers.read(first).metrics("turn").usage.output_tokens, 5)
+            self.assertEqual(readers.read(second).metrics("turn").usage.output_tokens, 2)
 
 if __name__ == "__main__":
     unittest.main()
