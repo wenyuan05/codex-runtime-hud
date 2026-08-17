@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import ctypes
+import json
 import subprocess
 import sys
+import tempfile
 import time
 from ctypes import wintypes
 from pathlib import Path
@@ -50,6 +52,15 @@ def grab(hwnd: int):
     return image
 
 
+def grab_scene(hwnd: int, extra_height: int = 0):
+    rect = wintypes.RECT()
+    user32.GetWindowRect(hwnd, ctypes.byref(rect))
+    image = ImageGrab.grab(bbox=(rect.left, rect.top, rect.right, rect.bottom + extra_height)).convert("RGB")
+    pixels = [DEMO_BACKGROUND if pixel == TRANSPARENT_RGB else pixel for pixel in image.getdata()]
+    image.putdata(pixels)
+    return image
+
+
 def click_window(hwnd: int, x: int, y: int) -> None:
     rect = wintypes.RECT()
     user32.GetWindowRect(hwnd, ctypes.byref(rect))
@@ -62,37 +73,54 @@ def main() -> int:
     if sys.platform != "win32":
         print("Windows only", file=sys.stderr)
         return 2
-    proc = subprocess.Popen([sys.executable, str(ROOT / "codex_runtime_hud.py"), "--file", str(ROOT / "examples" / "sample_rollout.jsonl"), "--lang", "en"])
-    try:
-        hwnd = 0
-        for _ in range(40):
-            hwnd = find_window("Codex Runtime HUD")
-            if hwnd:
-                break
-            time.sleep(0.1)
-        if not hwnd:
-            raise RuntimeError("HUD window not found")
-        time.sleep(0.5)
-        frames = [grab(hwnd)]
-        user32.SetForegroundWindow(hwnd)
-        # Compact mode places the scope switch on the right; click the open
-        # body area so the demo expands instead of changing scope.
-        click_window(hwnd, 110, 20)
-        time.sleep(0.5)
-        frames.append(grab(hwnd))
-        width = max(frame.width for frame in frames)
-        height = max(frame.height for frame in frames)
-        canvas = [Image.new("RGB", (width, height), DEMO_BACKGROUND) for _ in frames]
-        canvas[0].paste(frames[0], (0, 0)); canvas[1].paste(frames[1], (0, 0))
-        canvas[0].save(OUT, save_all=True, append_images=[canvas[1]], duration=[1200, 1800], loop=0, optimize=True)
-        print(OUT)
-        return 0
-    finally:
-        proc.terminate()
+    with tempfile.TemporaryDirectory(prefix="codex-runtime-hud-demo-") as temp:
+        demo_home = Path(temp)
+        sessions = demo_home / "sessions"
+        sessions.mkdir()
+        rollout = sessions / "rollout-demo.jsonl"
+        meta = {"type": "session_meta", "payload": {"thread_source": "user", "originator": "Codex Desktop", "id": "demo-thread", "cwd": "C:/DemoProject"}}
+        sample = (ROOT / "examples" / "sample_rollout.jsonl").read_text(encoding="utf-8")
+        rollout.write_text(json.dumps(meta) + "\n" + sample, encoding="utf-8")
+        proc = subprocess.Popen([sys.executable, str(ROOT / "codex_runtime_hud.py"), "--codex-home", str(demo_home), "--lang", "en"])
         try:
-            proc.wait(timeout=3)
-        except subprocess.TimeoutExpired:
-            proc.kill()
+            hwnd = 0
+            for _ in range(40):
+                hwnd = find_window("Codex Runtime HUD")
+                if hwnd:
+                    break
+                time.sleep(0.1)
+            if not hwnd:
+                raise RuntimeError("HUD window not found")
+            time.sleep(0.5)
+            frames = [grab(hwnd)]
+            user32.SetForegroundWindow(hwnd)
+            # Compact mode places the scope switch on the right; click the open
+            # body area so the demo expands instead of changing scope.
+            click_window(hwnd, 110, 20)
+            time.sleep(0.5)
+            frames.append(grab(hwnd))
+            # Show the real session picker, then demonstrate its fixed outside
+            # click behavior by clicking the expanded HUD behind/above it.
+            click_window(hwnd, 60, 18)
+            time.sleep(0.5)
+            frames.append(grab_scene(hwnd, extra_height=360))
+            click_window(hwnd, 250, 45)
+            time.sleep(0.5)
+            frames.append(grab(hwnd))
+            width = max(frame.width for frame in frames)
+            height = max(frame.height for frame in frames)
+            canvas = [Image.new("RGB", (width, height), DEMO_BACKGROUND) for _ in frames]
+            for target, source in zip(canvas, frames):
+                target.paste(source, (0, 0))
+            canvas[0].save(OUT, save_all=True, append_images=canvas[1:], duration=[1100, 1300, 1600, 1300], loop=0, optimize=True)
+            print(OUT)
+            return 0
+        finally:
+            proc.terminate()
+            try:
+                proc.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                proc.kill()
 
 
 if __name__ == "__main__":

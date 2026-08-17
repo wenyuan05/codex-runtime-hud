@@ -8,6 +8,8 @@
 
 这是一个专注于 Codex Desktop / Codex CLI **单轮实时表现**的 Windows 悬浮窗。它会跟随 root user rollout 的 JSONL 增量写入实时刷新，不调用任何 API。
 
+当前版本：**v0.4.1**。会话列表固定在点击列表外时自动关闭；演示 GIF 展示了折叠/展开 HUD、会话列表和列表外点击关闭行为。
+
 ## 监控重点
 
 默认视图是当前轮，而不是历史仪表盘。单轮运行期间，HUD 展示 LLM 耗时、TTFT、工具耗时、Steps、Token 速度、输入/输出 Token、缓存命中率和上下文使用率；“累计”视图仅作为 session 累计对照。

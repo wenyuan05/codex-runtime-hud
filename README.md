@@ -8,6 +8,8 @@
 
 A Windows always-on-top HUD focused on real-time, single-turn performance for Codex Desktop / Codex CLI. It follows the active root user rollout as JSONL is appended and never calls an API.
 
+Current release: **v0.4.1**. The session picker always closes when clicking outside it; the demo GIF shows the compact/expanded HUD, picker and outside-click behavior.
+
 ## What it monitors
 
 The default view is the current turn, not a historical dashboard. While a turn is running, the HUD surfaces LLM elapsed time, TTFT, tool time, Steps, token speed, input/output tokens, cache hit and context usage. Session cumulative metrics remain available as a secondary comparison view.
