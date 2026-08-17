@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Codex Runtime HUD v0.4.0
+Codex Runtime HUD v0.4.1
 
 Read-only floating HUD for real-time current-turn performance in Codex Desktop / Codex CLI.
 
@@ -54,7 +54,7 @@ def codex_home_default() -> Path:
 APP_NAME = "CodexRuntimeHUD"
 APP_DISPLAY_NAME = "Codex Runtime HUD"
 LEGACY_APP_NAME = "CodexTokenOverlay"
-APP_VERSION = "0.4.0"
+APP_VERSION = "0.4.1"
 # Rollouts can contain an unmatched task_started after a crash, forced stop, or
 # older protocol transition. Do not expose such historical open turns as live
 # sessions forever; keep a short window for an active/waiting indication.

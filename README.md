@@ -18,7 +18,7 @@ The default view is the current turn, not a historical dashboard. While a turn i
 - Does **not** read `auth.json`, API keys, `.env` files, prompts outside the rollout file, or credentials.
 - The application makes no network connections. GitHub, Python and PyInstaller are only used for distribution/building.
 - Settings contain only window coordinates and UI preferences: `%LOCALAPPDATA%\CodexRuntimeHUD\settings.json`.
-  UI preferences include `expanded`, `scope`, `language` (`auto`, `en`, `zh-CN`), `always_on_top` and local session-selection mode. `Auto` follows the Windows UI language; an explicit English/Chinese choice is remembered until changed back to `Auto`.
+  UI preferences include `expanded`, `scope`, `language` (`auto`, `en`, `zh-CN`), `always_on_top` and local session-selection mode. The session picker always closes when clicking outside it. `Auto` follows the Windows UI language; an explicit English/Chinese choice is remembered until changed back to `Auto`.
 - Existing settings from `%LOCALAPPDATA%\CodexTokenOverlay\settings.json` are read as a one-way compatibility fallback; new saves use the `CodexRuntimeHUD` folder.
 
 ### Session status limitations
@@ -35,7 +35,7 @@ Verify the download with `SHA256SUMS.txt`:
 Get-FileHash .\CodexRuntimeHUD.exe -Algorithm SHA256
 ```
 
-Double-click the EXE. The compact HUD shows a Sessions button, scope, Cache, In and Out; click the body to expand the detailed panel. Click Sessions to open a scrollable local root-session list. `Follow automatically` keeps the stable latest-root behavior; selecting a session locks the HUD to that session until you select Auto again. Session rows use only the local `cwd` project folder plus a short thread ID, never prompt text. Click Current/Session to switch scope without expanding. Drag from the background to move it; a right-click opens the native menu for scope, sessions, Always on top, startup, language, reset position, copy and Quit. The tray icon mirrors Sessions alongside Show/Hide, Start with Windows, Language, About and Quit. Startup is opt-in and uses the current user's registry only. Position and UI preferences persist across launches.
+Double-click the EXE. The compact HUD shows a Sessions button, scope, Cache, In and Out; click the body to expand the detailed panel. Click Sessions to open a scrollable local root-session list. `Follow automatically` keeps the stable latest-root behavior; selecting a session locks the HUD to that session until you select Auto again. Session rows use only the local `cwd` project folder plus a short thread ID, never prompt text. The picker always closes when clicking outside it. Click Current/Session to switch scope without expanding. Drag from the background to move it; a right-click opens the native menu for scope, sessions, Always on top, startup, language, reset position, copy and Quit. The tray icon mirrors Sessions alongside Show/Hide, Start with Windows, Language, About and Quit. Startup is opt-in and uses the current user's registry only. Position and UI preferences persist across launches.
 
 ## Run from source
 

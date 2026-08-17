@@ -4,11 +4,11 @@ VSVersionInfo(
   kids=[StringFileInfo([StringTable('040904B0', [
     StringStruct('CompanyName', 'wenyuan05'),
     StringStruct('FileDescription', 'Codex Runtime HUD - real-time current-turn performance monitor'),
-    StringStruct('FileVersion', '0.4.0'),
+    StringStruct('FileVersion', '0.4.1'),
     StringStruct('InternalName', 'CodexRuntimeHUD'),
     StringStruct('OriginalFilename', 'CodexRuntimeHUD.exe'),
     StringStruct('ProductName', 'Codex Runtime HUD'),
-    StringStruct('ProductVersion', '0.4.0'),
+    StringStruct('ProductVersion', '0.4.1'),
     StringStruct('LegalCopyright', 'MIT License; 2026 wenyuan05'),
   ])]), VarFileInfo([VarStruct('Translation', [1033, 1200])])]
 )

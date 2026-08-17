@@ -437,6 +437,27 @@ def run_gui(args: Any) -> int:
                 pass
         session_popup = None
 
+    def handle_session_popup_release(event: Any) -> str:
+        popup = session_popup
+        if popup is None:
+            return ""
+        try:
+            left, top = popup.winfo_rootx(), popup.winfo_rooty()
+            right = left + popup.winfo_width()
+            bottom = top + popup.winfo_height()
+            if not (left <= event.x_root < right and top <= event.y_root < bottom):
+                close_session_picker()
+                return "break"
+        except tk.TclError:
+            close_session_picker()
+            return "break"
+        return ""
+
+    # A popup-local binding cannot observe releases on the visible HUD area
+    # beneath/next to it. The application-wide binding covers every Tk window
+    # owned by this process; FocusOut below covers clicks on other applications.
+    root.bind_all("<ButtonRelease-1>", handle_session_popup_release, add="+")
+
     def set_session_auto() -> None:
         state["session_selection_mode"] = "auto"
         state["selected_session_key"] = ""
@@ -516,6 +537,11 @@ def run_gui(args: Any) -> int:
             for widget in (row, name_label, status_label):
                 widget.bind("<ButtonRelease-1>", lambda event, key=candidate.key: select_session_row(event, key))
         popup.bind("<Escape>", lambda _e: close_session_picker())
+        popup.bind("<ButtonRelease-1>", handle_session_popup_release, add="+")
+        popup.bind(
+            "<FocusOut>",
+            lambda _e: popup.after_idle(lambda: close_session_picker() if session_popup is popup and not popup.focus_displayof() else None),
+        )
         popup.protocol("WM_DELETE_WINDOW", close_session_picker)
         popup.update_idletasks()
         x = root.winfo_x()
@@ -523,10 +549,6 @@ def run_gui(args: Any) -> int:
         x, y = clamp_tk_position(x, y, popup.winfo_reqwidth(), popup.winfo_reqheight())
         popup.geometry(f"+{x}+{y}")
         popup.focus_force()
-        try:
-            popup.grab_set()
-        except tk.TclError:
-            pass
 
     def quit_app(_event: Any = None) -> None:
         persist_ui()

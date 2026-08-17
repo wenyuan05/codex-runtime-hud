@@ -18,7 +18,7 @@
 - **不会**读取 `auth.json`、API Key、`.env`、rollout 之外的提示词或凭据。
 - 应用运行时不联网；GitHub、Python、PyInstaller 只用于分发和构建。
 - 设置文件只保存窗口坐标和 UI 偏好：`%LOCALAPPDATA%\CodexRuntimeHUD\settings.json`。
-  UI 偏好包括 `expanded`、`scope`、`language`（`auto`、`en`、`zh-CN`）、`always_on_top` 和本地会话选择模式。`Auto` 跟随 Windows UI 语言；手动选择中英文后会记住该选择，改回 `Auto` 才恢复自动检测。
+  UI 偏好包括 `expanded`、`scope`、`language`（`auto`、`en`、`zh-CN`）、`always_on_top` 和本地会话选择模式。会话列表固定在点击列表外时自动关闭。`Auto` 跟随 Windows UI 语言；手动选择中英文后会记住该选择，改回 `Auto` 才恢复自动检测。
 - 现有 `%LOCALAPPDATA%\CodexTokenOverlay\settings.json` 会作为一次性兼容回退读取；之后的新设置写入 `CodexRuntimeHUD` 文件夹。
 
 ### 会话状态的局限
@@ -35,7 +35,7 @@
 Get-FileHash .\CodexRuntimeHUD.exe -Algorithm SHA256
 ```
 
-双击 EXE 即可运行。折叠 HUD 顶部提供“会话”按钮、范围、Cache、In、Out；点击主体展开详细面板。点击“会话”会显示可滚动的本地 root 会话列表。“自动跟随”保留稳定的最新 root 会话策略；手动选择某个会话后，HUD 会锁定它，直到重新选择自动跟随。列表只使用本地 `cwd` 项目目录名和短 thread ID，不读取提示词正文。点击“本轮/累计”只切换范围，不会展开。拖动背景区域移动窗口；右键打开原生菜单，可切换范围、会话、始终置顶、开机启动、语言、重置位置、复制和退出。托盘菜单也提供会话入口，以及显示/隐藏、开机启动、语言（自动/English/简体中文）、关于和退出。开机启动默认关闭，启用后只写入当前用户注册表；位置和 UI 偏好会跨重启保留。
+双击 EXE 即可运行。折叠 HUD 顶部提供“会话”按钮、范围、Cache、In、Out；点击主体展开详细面板。点击“会话”会显示可滚动的本地 root 会话列表。“自动跟随”保留稳定的最新 root 会话策略；手动选择某个会话后，HUD 会锁定它，直到重新选择自动跟随。列表只使用本地 `cwd` 项目目录名和短 thread ID，不读取提示词正文。会话列表固定在点击列表外时自动关闭。点击“本轮/累计”只切换范围，不会展开。拖动背景区域移动窗口；右键打开原生菜单，可切换范围、会话、始终置顶、开机启动、语言、重置位置、复制和退出。托盘菜单也提供会话入口，以及显示/隐藏、开机启动、语言（自动/English/简体中文）、关于和退出。开机启动默认关闭，启用后只写入当前用户注册表；位置和 UI 偏好会跨重启保留。
 
 ## 源码运行
 
