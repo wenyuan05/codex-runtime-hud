@@ -1279,6 +1279,12 @@ class RolloutCandidate:
             return False
         return (time.time() if now is None else now) - self.last_event_ts >= grace_seconds
 
+    def activity_priority(self, now: Optional[float] = None) -> int:
+        """Rank candidates for display/selection: active, waiting, then idle."""
+        if not self.is_active():
+            return 0
+        return 1 if self.is_waiting_for_update(now=now) else 2
+
 
 @dataclass
 class _CandidateMetadataState:
@@ -1427,8 +1433,13 @@ class RootThreadSelector:
         return [candidate for candidate in active if candidate.eligible]
 
     @staticmethod
-    def rank(candidate: RolloutCandidate) -> tuple[int, float, float]:
-        return (candidate.priority, candidate.task_started_ts or 0.0, candidate.last_event_ts or 0.0)
+    def rank(candidate: RolloutCandidate) -> tuple[int, int, float, float]:
+        return (
+            candidate.activity_priority(),
+            candidate.priority,
+            candidate.task_started_ts or 0.0,
+            candidate.last_event_ts or 0.0,
+        )
 
     def choose_from_candidates(self, candidates: list[RolloutCandidate]) -> Optional[RolloutCandidate]:
         if not candidates:
@@ -1439,9 +1450,12 @@ class RootThreadSelector:
         current = by_path.get(self.current) if self.current else None
         best = max(candidates, key=self.rank)
         if current is not None:
-            if best.path != current.path and (best.task_started_ts or 0.0) > (current.task_started_ts or 0.0):
+            best_activity = best.activity_priority()
+            current_activity = current.activity_priority()
+            newer_task = (best.task_started_ts or 0.0) > (current.task_started_ts or 0.0)
+            if best.path != current.path and (best_activity > current_activity or (best_activity == current_activity and newer_task)):
                 self.current = best.path
-                self.reason = "newer root task_started"
+                self.reason = "higher activity priority" if best_activity > current_activity else "newer root task_started"
                 return best
             self.reason = "kept current root thread"
             return current
