@@ -250,7 +250,9 @@ def run_gui(args: Any) -> int:
             model = metrics.model if metrics and metrics.model and args.model else "Codex"
             candidate = cache.get("candidate")
             if candidate is not None and candidate.is_active():
-                indicator_color = STATUS_BLUE if candidate.is_waiting_for_update() else ACCENT
+                indicator_color = ACCENT
+            elif candidate is not None and candidate.is_waiting_for_update():
+                indicator_color = STATUS_BLUE
             else:
                 indicator_color = MUTED
             canvas.create_oval(16, 39, 22, 45, fill=indicator_color, outline="")
@@ -451,9 +453,9 @@ def run_gui(args: Any) -> int:
 
     def session_activity(candidate: RolloutCandidate) -> tuple[str, str]:
         if candidate.is_active():
-            if candidate.is_waiting_for_update():
-                return tr(lang, "session_waiting"), STATUS_BLUE
             return tr(lang, "session_active"), ACCENT
+        if candidate.is_waiting_for_update():
+            return tr(lang, "session_waiting"), STATUS_BLUE
         return tr(lang, "session_idle"), MUTED
 
     def session_row_text(candidate: RolloutCandidate) -> str:

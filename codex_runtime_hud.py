@@ -55,6 +55,11 @@ APP_NAME = "CodexRuntimeHUD"
 APP_DISPLAY_NAME = "Codex Runtime HUD"
 LEGACY_APP_NAME = "CodexTokenOverlay"
 APP_VERSION = "0.4.0"
+# Rollouts can contain an unmatched task_started after a crash, forced stop, or
+# older protocol transition. Do not expose such historical open turns as live
+# sessions forever; keep a short window for an active/waiting indication.
+ACTIVE_EVENT_GRACE_SECONDS = 120.0
+STALE_OPEN_TURN_SECONDS = 24 * 60 * 60.0
 
 
 def app_data_dir() -> Path:
@@ -1259,31 +1264,33 @@ class RolloutCandidate:
     def display_name(self) -> str:
         return f"{self.project_name} · {self.short_id}"
 
-    def is_active(self, now: Optional[float] = None) -> bool:
-        """A session stays active until its latest turn completes or aborts.
+    def activity_state(self, now: Optional[float] = None) -> str:
+        """Return one mutually exclusive state: active, waiting, or idle.
 
-        Codex can spend a long time reasoning or waiting for a tool without
-        appending JSONL. File mtime therefore is not a reliable live-state
-        signal; it remains available as ``last_event_ts`` for sorting only.
+        Lifecycle events are authoritative when present. Recency only splits
+        an unfinished latest turn into active/waiting and eventually expires a
+        likely interrupted historical turn; it never revives a completed turn.
         """
-        return bool(self.open_turn_ids)
+        if not self.open_turn_ids or self.last_event_ts is None:
+            return "idle"
+        age = max(0.0, (time.time() if now is None else now) - self.last_event_ts)
+        if age < ACTIVE_EVENT_GRACE_SECONDS:
+            return "active"
+        if age < STALE_OPEN_TURN_SECONDS:
+            return "waiting"
+        return "idle"
+
+    def is_active(self, now: Optional[float] = None) -> bool:
+        return self.activity_state(now=now) == "active"
 
     def is_waiting_for_update(self, now: Optional[float] = None, grace_seconds: float = 120.0) -> bool:
-        """Return true for an open turn whose rollout has gone quiet.
-
-        This is deliberately distinct from idle: an absent completion event
-        means the local data still describes an open turn, but the user should
-        be able to spot potentially stale interrupted sessions in the list.
-        """
-        if not self.is_active() or self.last_event_ts is None:
-            return False
-        return (time.time() if now is None else now) - self.last_event_ts >= grace_seconds
+        # ``grace_seconds`` remains accepted for source compatibility. State
+        # thresholds are centralized so UI, sorting and auto-selection agree.
+        return self.activity_state(now=now) == "waiting"
 
     def activity_priority(self, now: Optional[float] = None) -> int:
         """Rank candidates for display/selection: active, waiting, then idle."""
-        if not self.is_active():
-            return 0
-        return 1 if self.is_waiting_for_update(now=now) else 2
+        return {"idle": 0, "waiting": 1, "active": 2}[self.activity_state(now=now)]
 
 
 @dataclass
@@ -1334,6 +1341,9 @@ def _feed_candidate_line(candidate: RolloutCandidate, raw: bytes) -> None:
         if started is not None:
             candidate.task_started_ts = max(candidate.task_started_ts or started, started)
         turn_id = str(payload.get("turn_id") or f"turn:{started or candidate.task_started_ts or 0}")
+        # A root thread has one foreground turn. A later start supersedes an
+        # unmatched legacy/interrupted turn instead of leaving it live forever.
+        candidate.open_turn_ids.clear()
         candidate.open_turn_ids.add(turn_id)
     elif event_type in RolloutParser.TURN_END_TYPES or event_type in RolloutParser.TURN_ABORT_TYPES:
         turn_id = str(payload.get("turn_id") or "")
@@ -1430,7 +1440,17 @@ class RootThreadSelector:
                 continue
             if any(candidate.eligible for candidate in active) and not archived:
                 break
-        return [candidate for candidate in active if candidate.eligible]
+        eligible = [candidate for candidate in active if candidate.eligible]
+        # Desktop can persist multiple rollout files for the same stable root
+        # thread. Keep only its newest representative in the picker.
+        by_key: dict[str, RolloutCandidate] = {}
+        for candidate in eligible:
+            current = by_key.get(candidate.key)
+            candidate_rank = (candidate.task_started_ts or 0.0, candidate.last_event_ts or 0.0)
+            current_rank = ((current.task_started_ts or 0.0), (current.last_event_ts or 0.0)) if current else None
+            if current is None or candidate_rank > current_rank:
+                by_key[candidate.key] = candidate
+        return list(by_key.values())
 
     @staticmethod
     def rank(candidate: RolloutCandidate) -> tuple[int, int, float, float]:

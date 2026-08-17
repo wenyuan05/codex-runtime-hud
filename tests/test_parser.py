@@ -286,6 +286,37 @@ class HudTests(unittest.TestCase):
         self.assertEqual(active.activity_priority(now=110), 2)
         self.assertEqual(waiting.activity_priority(now=220), 1)
         self.assertEqual(idle.activity_priority(now=220), 0)
+        self.assertEqual(waiting.activity_priority(now=90000), 0)
+
+    def test_new_turn_supersedes_unmatched_older_turn(self):
+        with tempfile.TemporaryDirectory() as td:
+            home = Path(td)
+            sessions = home / "sessions"
+            sessions.mkdir()
+            path = sessions / "rollout-superseded.jsonl"
+            path.write_text("\n".join([
+                json.dumps({"type": "session_meta", "payload": {"thread_source": "user", "id": "thread"}}),
+                json.dumps({"type": "event_msg", "payload": {"type": "task_started", "turn_id": "orphan", "started_at": 100}}),
+                json.dumps({"type": "event_msg", "payload": {"type": "task_started", "turn_id": "latest", "started_at": 200}}),
+                json.dumps({"type": "event_msg", "payload": {"type": "task_complete", "turn_id": "latest", "completed_at": 201}}),
+            ]) + "\n", encoding="utf-8")
+            candidate = RootThreadSelector().candidates(home)[0]
+            self.assertEqual(candidate.activity_state(), "idle")
+            self.assertEqual(candidate.open_turn_ids, set())
+
+    def test_selector_deduplicates_rollouts_for_same_thread(self):
+        with tempfile.TemporaryDirectory() as td:
+            home = Path(td)
+            sessions = home / "sessions"
+            sessions.mkdir()
+            for name, started in (("rollout-old.jsonl", 100), ("rollout-new.jsonl", 200)):
+                (sessions / name).write_text("\n".join([
+                    json.dumps({"type": "session_meta", "payload": {"thread_source": "user", "id": "same-thread"}}),
+                    json.dumps({"type": "event_msg", "payload": {"type": "task_started", "turn_id": name, "started_at": started}}),
+                ]) + "\n", encoding="utf-8")
+            candidates = RootThreadSelector().candidates(home)
+            self.assertEqual(len(candidates), 1)
+            self.assertEqual(candidates[0].path.name, "rollout-new.jsonl")
 
     def test_incremental_reader_pool_keeps_rollout_state_isolated(self):
         with tempfile.TemporaryDirectory() as td:
