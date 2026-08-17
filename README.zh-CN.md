@@ -21,6 +21,10 @@
   UI 偏好包括 `expanded`、`scope`、`language`（`auto`、`en`、`zh-CN`）、`always_on_top` 和本地会话选择模式。`Auto` 跟随 Windows UI 语言；手动选择中英文后会记住该选择，改回 `Auto` 才恢复自动检测。
 - 现有 `%LOCALAPPDATA%\CodexTokenOverlay\settings.json` 会作为一次性兼容回退读取；之后的新设置写入 `CodexRuntimeHUD` 文件夹。
 
+### 会话状态的局限
+
+会话状态只能根据本地 rollout 中已经持久化的生命周期事件推断。“活跃”表示 root turn 已开始，但还没有匹配的 `task_complete`、`turn_complete` 或中止事件。Codex 在推理或等待工具时可能很长时间不追加 JSONL，因此未完成但近期没有新写入的会话会显示为蓝色的 **运行中（等待更新）**，而不是“空闲”。如果 Codex 崩溃，或 rollout 在完成事件写入前被截断，HUD 无法证明任务是否仍在执行；在观察到完成/中止事件或文件重置前，它会保持生命周期为进行中。HUD 也无法知道 Desktop 当前聚焦的是哪个标签页。
+
 ## 下载
 
 从 [Releases](https://github.com/wenyuan05/codex-runtime-hud/releases) 下载最新的免安装 Windows x64 EXE。历史 v0.3.1 资产仍保留旧文件名；新构建使用 `CodexRuntimeHUD` 名称。EXE 未签名，首次运行可能出现 SmartScreen 提示。
@@ -69,6 +73,7 @@ Set-ExecutionPolicy -Scope Process Bypass
 - 工具耗时使用区间并集，并发工具不会重复计时。
 - 工具事件统一兼容 response-item call/output、legacy begin/end，以及未来的 `item_started/item_completed` wrapper。
 - 自动模式选择最新的合格 root user thread，并排除 subagent/memory consolidation；手动选择会锁定当前会话，切回自动模式后才恢复自动跟随；`--file` 可强制指定 rollout 并覆盖两种模式。
+- 会话状态只是持久化事件推断，不是进程监控；蓝色的 **运行中（等待更新）** 表示“已开始但当前没有新写入”，不保证任务此刻仍在执行。
 - 大型 rollout 会增量扫描 turn 元数据，不会因为最新 turn 位于文件中间而在启动时误选旧数据。
 - Codex 尚未持久化 `token_count` 或 response usage 时，Token 会显示为待定，而不是误报为 0。
 

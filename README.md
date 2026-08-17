@@ -21,6 +21,10 @@ The default view is the current turn, not a historical dashboard. While a turn i
   UI preferences include `expanded`, `scope`, `language` (`auto`, `en`, `zh-CN`), `always_on_top` and local session-selection mode. `Auto` follows the Windows UI language; an explicit English/Chinese choice is remembered until changed back to `Auto`.
 - Existing settings from `%LOCALAPPDATA%\CodexTokenOverlay\settings.json` are read as a one-way compatibility fallback; new saves use the `CodexRuntimeHUD` folder.
 
+### Session status limitations
+
+Session status is inferred only from local rollout lifecycle events. `Active` means a root turn has started without a matching `task_complete`, `turn_complete` or abort event. Codex may pause for a long time without appending JSONL, so an open turn with no recent writes is shown as **Running (waiting for update)** in blue rather than Idle. If Codex crashes or the rollout is truncated before its completion event, the HUD cannot prove whether the task is still running; it will keep the lifecycle state open until a completion/abort event or a file reset is observed. The HUD also cannot know which Desktop tab currently has focus.
+
 ## Download
 
 Download the latest portable Windows x64 executable from [Releases](https://github.com/wenyuan05/codex-runtime-hud/releases). The historical v0.3.1 asset keeps its legacy filename; new builds use the `CodexRuntimeHUD` name. The executable is unsigned, so SmartScreen may show a first-run warning.
@@ -69,6 +73,7 @@ The result is `dist\CodexRuntimeHUD.exe` plus `dist\SHA256SUMS.txt`. The same ch
 - Tool time is an interval union, so overlapping tools are not double-counted.
 - Tool events are normalized from response-item call/output pairs, legacy begin/end events, and future `item_started/item_completed` wrappers.
 - Automatic selection follows the latest eligible root user thread and excludes subagent/memory-consolidation sessions. A manual selection is locked until switched back to Auto; `--file` overrides both modes.
+- Session status is an estimate from persisted events, not a process monitor; blue **Running (waiting for update)** means “started but currently quiet,” not a guarantee that the task is still executing.
 - Large rollouts are scanned incrementally for turn metadata, so a newer turn in the middle of a file is not mistaken for stale startup data.
 - Token usage may remain pending until Codex persists a `token_count` or response-usage event.
 

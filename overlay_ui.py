@@ -7,11 +7,32 @@ interaction and UI preferences so visual changes cannot alter metric semantics.
 from __future__ import annotations
 
 import math
+import ctypes
 import queue
 import sys
 import threading
 from pathlib import Path
 from typing import Any, Optional
+
+
+def _enable_windows_dpi_awareness() -> None:
+    """Ask Windows for crisp per-monitor rendering before creating Tk."""
+    if sys.platform != "win32":
+        return
+    try:
+        # PROCESS_PER_MONITOR_DPI_AWARE (V2 context is preferred on Win10+).
+        user32 = ctypes.windll.user32
+        setter = getattr(user32, "SetProcessDpiAwarenessContext", None)
+        if setter is not None:
+            setter(ctypes.c_void_p(-4))  # DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2
+            return
+    except (AttributeError, OSError, TypeError):
+        pass
+    try:
+        # Windows 8.1 fallback: PROCESS_PER_MONITOR_DPI_AWARE = 2.
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)
+    except (AttributeError, OSError, TypeError):
+        pass
 
 
 def run_gui(args: Any) -> int:
@@ -75,6 +96,7 @@ def run_gui(args: Any) -> int:
     SECONDARY = "#a5a5aa"
     MUTED = "#6f6f75"
     ACCENT = "#e2bd68"
+    STATUS_BLUE = "#70aee8"
     WARNING = "#b99b6a"
     DANGER = "#ad6f76"
     UI = ("Segoe UI Variable", 10)
@@ -90,6 +112,7 @@ def run_gui(args: Any) -> int:
     CORNER_KEY = "#010101"
     window_bg = BG
 
+    _enable_windows_dpi_awareness()
     root = tk.Tk()
     root.title(tr(lang, "title"))
     root.configure(bg=window_bg)
@@ -225,9 +248,13 @@ def run_gui(args: Any) -> int:
             draw_text(scope_x + half + half // 2, scope_y + 12, tr(lang, "session"), UI_TINY, FG if state["scope"] == "session" else MUTED, "center", ("scope",))
 
             model = metrics.model if metrics and metrics.model and args.model else "Codex"
-            canvas.create_oval(16, 39, 22, 45, fill=ACCENT if metrics and metrics.active else MUTED, outline="")
-            draw_text(29, 42, model, ("Segoe UI Variable", 11), FG)
             candidate = cache.get("candidate")
+            if candidate is not None and candidate.is_active():
+                indicator_color = STATUS_BLUE if candidate.is_waiting_for_update() else ACCENT
+            else:
+                indicator_color = MUTED
+            canvas.create_oval(16, 39, 22, 45, fill=indicator_color, outline="")
+            draw_text(29, 42, model, ("Segoe UI Variable", 11), FG)
             session_name = candidate.display_name() if candidate is not None else tr(lang, "not_found")
             draw_text(16, 56, f"{session_name} · {mode_text}", UI_TINY, SECONDARY)
             if args.debug and path is not None:
@@ -418,11 +445,15 @@ def run_gui(args: Any) -> int:
         close_session_picker()
         root.after_idle(refresh_once)
 
-    def session_row_text(candidate: RolloutCandidate) -> str:
+    def session_activity(candidate: RolloutCandidate) -> tuple[str, str]:
         if candidate.is_active():
-            activity = tr(lang, "session_waiting") if candidate.is_waiting_for_update() else tr(lang, "session_active")
-        else:
-            activity = tr(lang, "session_idle")
+            if candidate.is_waiting_for_update():
+                return tr(lang, "session_waiting"), STATUS_BLUE
+            return tr(lang, "session_active"), ACCENT
+        return tr(lang, "session_idle"), MUTED
+
+    def session_row_text(candidate: RolloutCandidate) -> str:
+        activity, _color = session_activity(candidate)
         return f"{candidate.display_name()}  ·  {activity}"
 
     def show_session_picker() -> None:
@@ -463,10 +494,16 @@ def run_gui(args: Any) -> int:
             tk.Label(rows, text=tr(lang, "sessions_none"), bg=SURFACE, fg=MUTED, anchor="w", font=UI_SMALL, padx=12, pady=8).pack(fill="x")
         for candidate in candidates:
             selected = state["session_selection_mode"] == "manual" and state["selected_session_key"] == candidate.key
-            text = ("● " if selected else "○ ") + session_row_text(candidate)
-            tk.Button(rows, text=text, command=lambda key=candidate.key: set_session_manual(key), anchor="w", relief="flat", bd=0,
-                      bg=SURFACE_2 if selected else SURFACE, activebackground="#30343b", fg=FG, activeforeground=FG,
-                      font=UI_SMALL, padx=10, pady=6).pack(fill="x", pady=1)
+            activity, status_color = session_activity(candidate)
+            row = tk.Frame(rows, bg=SURFACE_2 if selected else SURFACE, cursor="hand2")
+            row.pack(fill="x", pady=1)
+            name_label = tk.Label(row, text=("● " if selected else "○ ") + candidate.display_name(), bg=row.cget("bg"), fg=FG,
+                                  anchor="w", font=UI_SMALL, padx=10, pady=6, cursor="hand2")
+            name_label.pack(side="left", fill="x", expand=True)
+            status_label = tk.Label(row, text=activity, bg=row.cget("bg"), fg=status_color, anchor="e", font=UI_TINY, padx=10, pady=6, cursor="hand2")
+            status_label.pack(side="right")
+            for widget in (row, name_label, status_label):
+                widget.bind("<Button-1>", lambda _event, key=candidate.key: set_session_manual(key))
         popup.bind("<Escape>", lambda _e: close_session_picker())
         popup.bind("<FocusOut>", lambda _e: popup.after(100, lambda: close_session_picker() if session_popup is popup and not popup.focus_displayof() else None))
         popup.update_idletasks()
