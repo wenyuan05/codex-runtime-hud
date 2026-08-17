@@ -426,6 +426,10 @@ def run_gui(args: Any) -> int:
         nonlocal session_popup
         if session_popup is not None:
             try:
+                session_popup.grab_release()
+            except Exception:
+                pass
+            try:
                 session_popup.destroy()
             except Exception:
                 pass
@@ -455,6 +459,11 @@ def run_gui(args: Any) -> int:
     def session_row_text(candidate: RolloutCandidate) -> str:
         activity, _color = session_activity(candidate)
         return f"{candidate.display_name()}  ·  {activity}"
+
+    def select_session_row(_event: Any, key: str) -> str:
+        """Select after mouse release so the underlying HUD never reopens the picker."""
+        set_session_manual(key)
+        return "break"
 
     def show_session_picker() -> None:
         nonlocal session_popup
@@ -503,15 +512,19 @@ def run_gui(args: Any) -> int:
             status_label = tk.Label(row, text=activity, bg=row.cget("bg"), fg=status_color, anchor="e", font=UI_TINY, padx=10, pady=6, cursor="hand2")
             status_label.pack(side="right")
             for widget in (row, name_label, status_label):
-                widget.bind("<Button-1>", lambda _event, key=candidate.key: set_session_manual(key))
+                widget.bind("<ButtonRelease-1>", lambda event, key=candidate.key: select_session_row(event, key))
         popup.bind("<Escape>", lambda _e: close_session_picker())
-        popup.bind("<FocusOut>", lambda _e: popup.after(100, lambda: close_session_picker() if session_popup is popup and not popup.focus_displayof() else None))
+        popup.protocol("WM_DELETE_WINDOW", close_session_picker)
         popup.update_idletasks()
         x = root.winfo_x()
         y = root.winfo_y() + root.winfo_height() + 6
         x, y = clamp_tk_position(x, y, popup.winfo_reqwidth(), popup.winfo_reqheight())
         popup.geometry(f"+{x}+{y}")
         popup.focus_force()
+        try:
+            popup.grab_set()
+        except tk.TclError:
+            pass
 
     def quit_app(_event: Any = None) -> None:
         persist_ui()
