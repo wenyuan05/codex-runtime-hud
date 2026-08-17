@@ -38,6 +38,25 @@ def find_window(title: str) -> int:
     return found[0] if found else 0
 
 
+def find_popup_window(root_hwnd: int, process_id: int) -> int:
+    found: list[int] = []
+    enum = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+
+    def callback(hwnd, _lparam):
+        pid = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        if int(pid.value) != process_id or int(hwnd) == root_hwnd or not user32.IsWindowVisible(hwnd):
+            return True
+        rect = wintypes.RECT()
+        user32.GetWindowRect(hwnd, ctypes.byref(rect))
+        if rect.right - rect.left > 180 and rect.bottom - rect.top > 50:
+            found.append(int(hwnd))
+        return True
+
+    user32.EnumWindows(enum(callback), 0)
+    return found[-1] if found else 0
+
+
 def grab(hwnd: int):
     rect = wintypes.RECT()
     user32.GetWindowRect(hwnd, ctypes.byref(rect))
@@ -61,6 +80,24 @@ def grab_scene(hwnd: int, extra_height: int = 0):
     return image
 
 
+def grab_windows(root_hwnd: int, popup_hwnd: int):
+    windows = [root_hwnd] + ([popup_hwnd] if popup_hwnd else [])
+    rects = []
+    for hwnd in windows:
+        rect = wintypes.RECT()
+        user32.GetWindowRect(hwnd, ctypes.byref(rect))
+        rects.append(rect)
+    left = min(rect.left for rect in rects)
+    top = min(rect.top for rect in rects)
+    right = max(rect.right for rect in rects)
+    bottom = max(rect.bottom for rect in rects)
+    scene = Image.new("RGB", (right - left, bottom - top), DEMO_BACKGROUND)
+    for hwnd, rect in zip(windows, rects):
+        image = grab(hwnd)
+        scene.paste(image, (rect.left - left, rect.top - top))
+    return scene
+
+
 def click_window(hwnd: int, x: int, y: int) -> None:
     rect = wintypes.RECT()
     user32.GetWindowRect(hwnd, ctypes.byref(rect))
@@ -81,7 +118,9 @@ def main() -> int:
         meta = {"type": "session_meta", "payload": {"thread_source": "user", "originator": "Codex Desktop", "id": "demo-thread", "cwd": "C:/DemoProject"}}
         sample = (ROOT / "examples" / "sample_rollout.jsonl").read_text(encoding="utf-8")
         rollout.write_text(json.dumps(meta) + "\n" + sample, encoding="utf-8")
-        proc = subprocess.Popen([sys.executable, str(ROOT / "codex_runtime_hud.py"), "--codex-home", str(demo_home), "--lang", "en"])
+        env = dict(__import__("os").environ)
+        env["LOCALAPPDATA"] = str(demo_home / "localapp")
+        proc = subprocess.Popen([sys.executable, str(ROOT / "codex_runtime_hud.py"), "--codex-home", str(demo_home), "--lang", "en"], env=env)
         try:
             hwnd = 0
             for _ in range(40):
@@ -96,15 +135,18 @@ def main() -> int:
             user32.SetForegroundWindow(hwnd)
             # Compact mode places the scope switch on the right; click the open
             # body area so the demo expands instead of changing scope.
-            click_window(hwnd, 110, 20)
+            click_window(hwnd, 110, 60)
             time.sleep(0.5)
             frames.append(grab(hwnd))
             # Show the real session picker, then demonstrate its fixed outside
             # click behavior by clicking the expanded HUD behind/above it.
             click_window(hwnd, 60, 18)
             time.sleep(0.5)
-            frames.append(grab_scene(hwnd, extra_height=360))
-            click_window(hwnd, 250, 45)
+            popup_hwnd = find_popup_window(hwnd, proc.pid)
+            frames.append(grab_windows(hwnd, popup_hwnd))
+            # Click the expanded scope control outside the picker: this closes
+            # the picker while keeping the HUD expanded for the final frame.
+            click_window(hwnd, 330, 20)
             time.sleep(0.5)
             frames.append(grab(hwnd))
             width = max(frame.width for frame in frames)
@@ -112,7 +154,14 @@ def main() -> int:
             canvas = [Image.new("RGB", (width, height), DEMO_BACKGROUND) for _ in frames]
             for target, source in zip(canvas, frames):
                 target.paste(source, (0, 0))
-            canvas[0].save(OUT, save_all=True, append_images=canvas[1:], duration=[1100, 1300, 1600, 1300], loop=0, optimize=True)
+            canvas[0].save(
+                OUT,
+                save_all=True,
+                append_images=canvas[1:],
+                duration=[1100, 1300, 1600, 1300],
+                loop=0,
+                optimize=False,
+            )
             print(OUT)
             return 0
         finally:
