@@ -81,12 +81,24 @@ def run_gui(args: Any) -> int:
         "session_selection_mode": settings.get("session_selection_mode", "auto"),
         "selected_session_key": settings.get("selected_session_key", ""),
         "visible": True,
+        "compact_size": settings.get("compact_size", (220, 112)),
+        "expanded_size": settings.get("expanded_size", (360, 214)),
     }
     if state["scope"] not in {"turn", "session"}:
         state["scope"] = "turn"
     if state["session_selection_mode"] not in {"auto", "manual"}:
         state["session_selection_mode"] = "auto"
         state["selected_session_key"] = ""
+
+    def valid_size(value: Any, default: tuple[int, int], minimum: tuple[int, int]) -> tuple[int, int]:
+        try:
+            width, height = int(value[0]), int(value[1])
+        except (TypeError, ValueError, IndexError):
+            return default
+        return max(minimum[0], width), max(minimum[1], height)
+
+    state["compact_size"] = valid_size(state["compact_size"], (220, 112), (180, 112))
+    state["expanded_size"] = valid_size(state["expanded_size"], (360, 214), (300, 214))
 
     BG = "#18181a"
     SURFACE = "#1c1c1f"
@@ -117,6 +129,8 @@ def run_gui(args: Any) -> int:
     root.title(tr(lang, "title"))
     root.configure(bg=window_bg)
     root.overrideredirect(True)
+    # The window is borderless, so resizing is implemented by the canvas
+    # resize grip below rather than by the native window frame.
     root.resizable(False, False)
     if sys.platform == "win32":
         try:
@@ -142,6 +156,7 @@ def run_gui(args: Any) -> int:
     scope_bounds = (0, 0, 0, 0)
     session_bounds = (0, 0, 0, 0)
     drag: dict[str, Any] = {"offset_x": 0, "offset_y": 0, "press_x": 0, "press_y": 0, "moved": False, "target": "body"}
+    resize_drag: dict[str, Any] = {"width": 0, "height": 0, "x": 0, "y": 0, "edge": ""}
     tray_queue: queue.Queue[str] = queue.Queue()
     tray_icon: dict[str, Any] = {"icon": None}
     tray_state: dict[str, Any] = {"quit": False}
@@ -172,7 +187,10 @@ def run_gui(args: Any) -> int:
         # Compact mode keeps the HUD narrow while giving its three headline
         # counters a readable vertical rhythm instead of squeezing them into
         # one horizontal strip.
-        return (360, 214) if state["expanded"] else (220, 112)
+        return tuple(state["expanded_size"] if state["expanded"] else state["compact_size"])
+
+    def resize_minimum() -> tuple[int, int]:
+        return (300, 214) if state["expanded"] else (180, 112)
 
     def rounded_rect(x1: int, y1: int, x2: int, y2: int, radius: int, fill: str, tags: Any = ()) -> None:
         radius = max(1, min(radius, (x2 - x1) // 2, (y2 - y1) // 2))
@@ -262,7 +280,10 @@ def run_gui(args: Any) -> int:
             if args.debug and path is not None:
                 draw_text(16, 68, path.name, UI_TINY, MUTED)
 
-            for x, (label, value) in zip((18, 132, 246), ((tr(lang, "cache"), values["cache"]), ("In", values["input"]), ("Out", values["output"]))):
+            headline_columns = ((tr(lang, "cache"), values["cache"]), ("In", values["input"]), ("Out", values["output"]))
+            headline_step = (width - 36) / 3
+            for index, (label, value) in enumerate(headline_columns):
+                x = 18 + index * headline_step
                 draw_text(x, 78, label, UI_TINY, SECONDARY)
                 draw_text(x, 95, value, ("Cascadia Mono", 13), FG)
 
@@ -274,22 +295,28 @@ def run_gui(args: Any) -> int:
                 (tr(lang, "speed"), values["speed"] + (" tok/s" if values["speed"] != tr(lang, "no_data") else "")),
                 (tr(lang, "reasoning"), values["reasoning"]),
             )
+            # Use extra vertical space for the two runtime rows instead of
+            # leaving a large blank area when the user stretches the HUD.
+            runtime_top = 126
+            context_y = height - 10
+            runtime_bottom = max(runtime_top + 31, context_y - 30)
+            runtime_row_step = max(31, (runtime_bottom - runtime_top) / 2)
             for index, (label, value) in enumerate(runtime):
-                x = 18 + (index % 3) * 114
-                y = 126 + (index // 3) * 31
+                x = 18 + (index % 3) * headline_step
+                y = runtime_top + (index // 3) * runtime_row_step
                 draw_text(x, y, label, UI_TINY, MUTED)
                 draw_text(x, y + 14, value, MONO, SECONDARY)
 
             context_text, pct = format_context(metrics, parsed is None or metrics is None)
-            draw_text(18, 204, tr(lang, "context"), UI_TINY, MUTED)
-            bar_x, bar_y, bar_w = 78, 201, 224
+            draw_text(18, context_y, tr(lang, "context"), UI_TINY, MUTED)
+            bar_x, bar_y, bar_w = 78, context_y - 3, max(80, width - 136)
             rounded_rect(bar_x, bar_y, bar_x + bar_w, bar_y + 5, 3, "#303035")
             if pct is not None and pct > 0:
                 bar_color = DANGER if pct > 90 else WARNING if pct >= 70 else "#7f8998"
                 rounded_rect(bar_x, bar_y, bar_x + max(3, int(bar_w * pct / 100.0)), bar_y + 5, 3, bar_color)
-            draw_text(width - 18, 204, context_text, UI_TINY, SECONDARY, "e")
+            draw_text(width - 18, context_y, context_text, UI_TINY, SECONDARY, "e")
             if args.debug and path is not None and parsed is not None and metrics is not None:
-                draw_text(18, 210, f"errors={parsed.parse_errors} · coverage={metrics.tool_timing_coverage*100:.0f}%", UI_TINY, MUTED)
+                draw_text(18, height - 3, f"errors={parsed.parse_errors} · coverage={metrics.tool_timing_coverage*100:.0f}%", UI_TINY, MUTED)
         else:
             session_w, session_h = 72, 24
             session_x, session_y = 10, 8
@@ -302,12 +329,26 @@ def run_gui(args: Any) -> int:
             rounded_rect(scope_x, scope_y, scope_x + scope_w, scope_y + scope_h, 7, SURFACE_2, ("scope",))
             rounded_rect(scope_x + 2, scope_y + 2, scope_x + scope_w - 2, scope_y + scope_h - 2, 5, "#30343b", ("scope",))
             draw_text(scope_x + scope_w / 2, scope_y + 12, tr(lang, "current") if state["scope"] == "turn" else tr(lang, "session"), UI_TINY, FG, "center", ("scope",))
-            for index, (label, value) in enumerate(
-                ((tr(lang, "cache"), values["cache"]), ("In", values["input"]), ("Out", values["output"]))
-            ):
-                y = 49 + index * 20
-                draw_text(18, y, label, UI_TINY, SECONDARY)
-                draw_text(82, y, value, MONO, FG)
+            compact_columns = ((tr(lang, "cache"), values["cache"]), ("In", values["input"]), ("Out", values["output"]))
+            if width >= 300:
+                step = (width - 36) / 3
+                for index, (label, value) in enumerate(compact_columns):
+                    x = 18 + index * step
+                    draw_text(x, 49, label, UI_TINY, SECONDARY)
+                    draw_text(x, 67, value, MONO, FG)
+            else:
+                compact_top = 49
+                compact_step = max(20, (height - compact_top - 10) / 2)
+                for index, (label, value) in enumerate(compact_columns):
+                    y = compact_top + index * compact_step
+                    draw_text(18, y, label, UI_TINY, SECONDARY)
+                    draw_text(82, y, value, MONO, FG)
+
+        # Subtle resize affordance. It remains inside the rounded silhouette,
+        # so it is usable even when the transparent window corners are active.
+        grip_color = "#5d5d64"
+        canvas.create_line(width - 14, height - 7, width - 7, height - 14, fill=grip_color, width=1)
+        canvas.create_line(width - 19, height - 7, width - 7, height - 19, fill=grip_color, width=1)
 
     def persist_ui() -> None:
         try:
@@ -322,6 +363,8 @@ def run_gui(args: Any) -> int:
                 "always_on_top": bool(state["always_on_top"]),
                 "session_selection_mode": state["session_selection_mode"],
                 "selected_session_key": state["selected_session_key"],
+                "compact_size": list(state["compact_size"]),
+                "expanded_size": list(state["expanded_size"]),
             })
             save_settings(settings)
         except Exception:
@@ -594,26 +637,63 @@ def run_gui(args: Any) -> int:
         context_menu.add_command(label=tr(lang, "quit"), command=quit_app)
 
     def on_press(event: Any) -> None:
+        width, height = window_size()
+        edge = ""
+        if event.x >= width - 12:
+            edge += "e"
+        if event.y >= height - 12:
+            edge += "s"
+        if edge:
+            resize_drag.update(width=width, height=height, x=event.x_root, y=event.y_root, edge=edge)
+            drag["target"] = "resize"
+            drag["moved"] = False
+            drag["press_x"], drag["press_y"] = event.x_root, event.y_root
+            return
         in_scope = scope_bounds[0] <= event.x <= scope_bounds[2] and scope_bounds[1] <= event.y <= scope_bounds[3]
         in_sessions = session_bounds[0] <= event.x <= session_bounds[2] and session_bounds[1] <= event.y <= session_bounds[3]
         target = "sessions" if in_sessions else "scope" if in_scope else "body"
         drag.update(offset_x=event.x_root - root.winfo_x(), offset_y=event.y_root - root.winfo_y(), press_x=event.x_root, press_y=event.y_root, moved=False, target=target)
 
     def on_move(event: Any) -> None:
+        if drag["target"] == "resize":
+            dx = event.x_root - resize_drag["x"]
+            dy = event.y_root - resize_drag["y"]
+            minimum_w, minimum_h = resize_minimum()
+            width = max(minimum_w, resize_drag["width"] + (dx if "e" in resize_drag["edge"] else 0))
+            height = max(minimum_h, resize_drag["height"] + (dy if "s" in resize_drag["edge"] else 0))
+            if abs(width - resize_drag["width"]) >= 1 or abs(height - resize_drag["height"]) >= 1:
+                drag["moved"] = True
+                if state["expanded"]:
+                    state["expanded_size"] = (width, height)
+                else:
+                    state["compact_size"] = (width, height)
+                root.geometry(f"{width}x{height}+{root.winfo_x()}+{root.winfo_y()}")
+                draw_ui()
+            return
         if max(abs(event.x_root - drag["press_x"]), abs(event.y_root - drag["press_y"])) >= 5:
             drag["moved"] = True
         if drag["moved"]:
             root.geometry(f"+{event.x_root - drag['offset_x']}+{event.y_root - drag['offset_y']}")
 
+    def on_hover(event: Any) -> None:
+        width, height = window_size()
+        if event.x >= width - 12 and event.y >= height - 12:
+            canvas.configure(cursor="size_nw_se")
+        else:
+            canvas.configure(cursor="hand2")
+
     def on_release(_event: Any) -> str:
         if drag["moved"]:
             persist_ui()
+        elif drag["target"] == "resize":
+            pass
         elif drag["target"] == "scope":
             toggle_scope()
         elif drag["target"] == "sessions":
             show_session_picker()
         else:
             toggle_expanded()
+        drag["target"] = "body"
         return "break"
 
     def render() -> None:
@@ -649,6 +729,7 @@ def run_gui(args: Any) -> int:
     canvas.bind("<ButtonPress-1>", on_press)
     canvas.bind("<B1-Motion>", on_move)
     canvas.bind("<ButtonRelease-1>", on_release)
+    canvas.bind("<Motion>", on_hover)
     canvas.bind("<Button-2>", copy_visible)
     canvas.bind("<Button-3>", show_context_menu)
     root.bind("<Button-3>", show_context_menu)

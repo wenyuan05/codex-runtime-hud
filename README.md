@@ -8,7 +8,7 @@
 
 A Windows always-on-top HUD focused on real-time, single-turn performance for Codex Desktop / Codex CLI. It follows the active root user rollout as JSONL is appended and never calls an API.
 
-Current release: **v0.4.1**. The session picker always closes when clicking outside it; the demo GIF shows the compact/expanded HUD, picker and outside-click behavior.
+Current release: **v0.4.2**. The HUD supports drag-resizing with responsive compact and expanded layouts; the session picker always closes when clicking outside it.
 
 ## What it monitors
 
@@ -37,7 +37,7 @@ Verify the download with `SHA256SUMS.txt`:
 Get-FileHash .\CodexRuntimeHUD.exe -Algorithm SHA256
 ```
 
-Double-click the EXE. The compact HUD shows a Sessions button, scope, Cache, In and Out; click the body to expand the detailed panel. Click Sessions to open a scrollable local root-session list. `Follow automatically` keeps the stable latest-root behavior; selecting a session locks the HUD to that session until you select Auto again. Session rows use only the local `cwd` project folder plus a short thread ID, never prompt text. The picker always closes when clicking outside it. Click Current/Session to switch scope without expanding. Drag from the background to move it; a right-click opens the native menu for scope, sessions, Always on top, startup, language, reset position, copy and Quit. The tray icon mirrors Sessions alongside Show/Hide, Start with Windows, Language, About and Quit. Startup is opt-in and uses the current user's registry only. Position and UI preferences persist across launches.
+Double-click the EXE. The compact HUD shows a Sessions button, scope, Cache, In and Out; click the body to expand the detailed panel. Click Sessions to open a scrollable local root-session list. `Follow automatically` keeps the stable latest-root behavior; selecting a session locks the HUD to that session until you select Auto again. Session rows use only the local `cwd` project folder plus a short thread ID, never prompt text. The picker always closes when clicking outside it. Click Current/Session to switch scope without expanding. Drag from the background to move it; drag the diagonal handle in the lower-right corner to resize it. Compact and expanded mode sizes are remembered separately. A right-click opens the native menu for scope, sessions, Always on top, startup, language, reset position, copy and Quit. The tray icon mirrors Sessions alongside Show/Hide, Start with Windows, Language, About and Quit. Startup is opt-in and uses the current user's registry only. Position and UI preferences persist across launches.
 
 ## Run from source
 
