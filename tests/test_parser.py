@@ -1,6 +1,7 @@
 import json
 import tempfile
 import unittest
+import os
 from pathlib import Path
 
 from codex_runtime_hud import IncrementalReaderPool, IncrementalRolloutReader, RolloutCandidate, RootThreadSelector, SessionSelection, parse_rollout, resolve_language
@@ -317,6 +318,29 @@ class HudTests(unittest.TestCase):
             candidates = RootThreadSelector().candidates(home)
             self.assertEqual(len(candidates), 1)
             self.assertEqual(candidates[0].path.name, "rollout-new.jsonl")
+
+    def test_selector_prefers_live_duplicate_over_historical_task_timestamp(self):
+        with tempfile.TemporaryDirectory() as td:
+            home = Path(td)
+            sessions = home / "sessions"
+            sessions.mkdir()
+            old = sessions / "rollout-old.jsonl"
+            live = sessions / "rollout-live.jsonl"
+            meta = {"type": "session_meta", "payload": {"thread_source": "user", "id": "same-thread"}}
+            old.write_text("\n".join([
+                json.dumps(meta),
+                json.dumps({"type": "event_msg", "payload": {"type": "task_started", "turn_id": "old", "started_at": 9999}}),
+            ]) + "\n", encoding="utf-8")
+            live.write_text("\n".join([
+                json.dumps(meta),
+                json.dumps({"type": "event_msg", "payload": {"type": "task_started", "turn_id": "live", "started_at": 100}}),
+            ]) + "\n", encoding="utf-8")
+            now = 1_800_000_000
+            os.utime(old, (now - 3600, now - 3600))
+            os.utime(live, (now, now))
+            candidates = RootThreadSelector().candidates(home)
+            self.assertEqual(len(candidates), 1)
+            self.assertEqual(candidates[0].path.name, "rollout-live.jsonl")
 
     def test_incremental_reader_pool_keeps_rollout_state_isolated(self):
         with tempfile.TemporaryDirectory() as td:

@@ -1446,8 +1446,12 @@ class RootThreadSelector:
         by_key: dict[str, RolloutCandidate] = {}
         for candidate in eligible:
             current = by_key.get(candidate.key)
-            candidate_rank = (candidate.task_started_ts or 0.0, candidate.last_event_ts or 0.0)
-            current_rank = ((current.task_started_ts or 0.0), (current.last_event_ts or 0.0)) if current else None
+            # A thread can have several rollout files. Prefer the file that
+            # is currently live, then its filesystem activity, and only use
+            # task_started as a tie-breaker; protocol timestamps can be stale
+            # or absent in older Desktop files.
+            candidate_rank = (candidate.activity_priority(), candidate.last_event_ts or 0.0, candidate.task_started_ts or 0.0)
+            current_rank = (current.activity_priority(), current.last_event_ts or 0.0, current.task_started_ts or 0.0) if current else None
             if current is None or candidate_rank > current_rank:
                 by_key[candidate.key] = candidate
         return list(by_key.values())
