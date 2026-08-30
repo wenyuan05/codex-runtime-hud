@@ -9,6 +9,40 @@ from codex_runtime_hud import IncrementalReaderPool, IncrementalRolloutReader, R
 ROWS = [{'timestamp': '2026-08-14T00:00:00Z', 'type': 'event_msg', 'payload': {'type': 'task_started', 'turn_id': 't1', 'started_at': 1786665600, 'model_context_window': 200000}}, {'timestamp': '2026-08-14T00:00:00.1Z', 'type': 'event_msg', 'payload': {'type': 'thread_settings_applied', 'thread_settings': {'model': 'gpt-5.6-luna'}}}, {'timestamp': '2026-08-14T00:00:03Z', 'type': 'event_msg', 'payload': {'type': 'raw_response_completed', 'response_id': 'r1', 'token_usage': {'input_tokens': 100000, 'cached_input_tokens': 95000, 'cache_write_input_tokens': 0, 'output_tokens': 5000, 'reasoning_output_tokens': 1000, 'total_tokens': 106000}}}, {'timestamp': '2026-08-14T00:00:10Z', 'type': 'event_msg', 'payload': {'type': 'token_count', 'info': {'total_token_usage': {'input_tokens': 100000, 'cached_input_tokens': 95000, 'cache_write_input_tokens': 0, 'output_tokens': 5000, 'reasoning_output_tokens': 1000, 'total_tokens': 106000}, 'last_token_usage': {'input_tokens': 100000, 'cached_input_tokens': 95000, 'cache_write_input_tokens': 0, 'output_tokens': 5000, 'reasoning_output_tokens': 1000, 'total_tokens': 106000}, 'model_context_window': 200000}, 'rate_limits': None}}, {'timestamp': '2026-08-14T00:00:10Z', 'type': 'event_msg', 'payload': {'type': 'task_complete', 'turn_id': 't1', 'started_at': 1786665600, 'completed_at': 1786665610, 'duration_ms': 10000, 'time_to_first_token_ms': 900, 'last_agent_message': 'done'}}, {'timestamp': '2026-08-14T00:01:00Z', 'type': 'event_msg', 'payload': {'type': 'task_started', 'turn_id': 't2', 'started_at': 1786665660, 'model_context_window': 200000}}, {'timestamp': '2026-08-14T00:01:02Z', 'type': 'event_msg', 'payload': {'type': 'exec_command_begin', 'call_id': 'c1', 'turn_id': 't2', 'started_at_ms': 1786665662000, 'command': ['git', 'status'], 'cwd': '.'}}, {'timestamp': '2026-08-14T00:01:03Z', 'type': 'event_msg', 'payload': {'type': 'mcp_tool_call_begin', 'call_id': 'c2', 'turn_id': 't2', 'invocation': {'server': 'x', 'tool': 'read', 'arguments': {}}}}, {'timestamp': '2026-08-14T00:01:05Z', 'type': 'event_msg', 'payload': {'type': 'exec_command_end', 'call_id': 'c1', 'turn_id': 't2', 'completed_at_ms': 1786665665000, 'command': ['git', 'status'], 'cwd': '.'}}, {'timestamp': '2026-08-14T00:01:07Z', 'type': 'event_msg', 'payload': {'type': 'mcp_tool_call_end', 'call_id': 'c2', 'turn_id': 't2', 'duration': '4s', 'result': {'Ok': {}}}}, {'timestamp': '2026-08-14T00:01:15Z', 'type': 'event_msg', 'payload': {'type': 'raw_response_completed', 'response_id': 'r2', 'token_usage': {'input_tokens': 20000, 'cached_input_tokens': 18000, 'cache_write_input_tokens': 0, 'output_tokens': 2000, 'reasoning_output_tokens': 300, 'total_tokens': 22300}}}, {'timestamp': '2026-08-14T00:01:20Z', 'type': 'event_msg', 'payload': {'type': 'token_count', 'info': {'total_token_usage': {'input_tokens': 120000, 'cached_input_tokens': 113000, 'cache_write_input_tokens': 0, 'output_tokens': 7000, 'reasoning_output_tokens': 1300, 'total_tokens': 128300}, 'last_token_usage': {'input_tokens': 20000, 'cached_input_tokens': 18000, 'cache_write_input_tokens': 0, 'output_tokens': 2000, 'reasoning_output_tokens': 300, 'total_tokens': 22300}, 'model_context_window': 200000}, 'rate_limits': None}}, {'timestamp': '2026-08-14T00:01:20Z', 'type': 'event_msg', 'payload': {'type': 'task_complete', 'turn_id': 't2', 'started_at': 1786665660, 'completed_at': 1786665680, 'duration_ms': 20000, 'time_to_first_token_ms': 800, 'last_agent_message': 'done'}}]
 
 class HudTests(unittest.TestCase):
+    def test_rate_limits_are_identified_by_window_duration(self):
+        rows = [
+            {"timestamp": "2026-08-30T00:00:00Z", "type": "event_msg", "payload": {"type": "task_started", "turn_id": "quota"}},
+            {"timestamp": "2026-08-30T00:00:01Z", "type": "event_msg", "payload": {
+                "type": "token_count",
+                "info": {},
+                "rate_limits": {
+                    "primary": {"used_percent": 25.0, "window_minutes": 300, "resets_at": 1788142419},
+                    "secondary": {"used_percent": 60.0, "window_minutes": 10080, "resets_at": 1788542419},
+                },
+            }},
+        ]
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "rollout-quota.jsonl"
+            path.write_text("\n".join(json.dumps(row) for row in rows), encoding="utf-8")
+            metrics = parse_rollout(path).metrics("turn")
+            self.assertEqual(metrics.five_hour_limit.window_minutes, 300)
+            self.assertEqual(metrics.five_hour_limit.remaining_percent, 75.0)
+            self.assertEqual(metrics.weekly_limit.window_minutes, 10080)
+            self.assertEqual(metrics.weekly_limit.remaining_percent, 40.0)
+
+            rows.append({"timestamp": "2026-08-30T00:00:02Z", "type": "event_msg", "payload": {
+                "type": "token_count",
+                "info": {},
+                "rate_limits": {
+                    "primary": {"used_percent": 10.0, "window_minutes": 10080, "resets_at": 1788542419},
+                    "secondary": None,
+                },
+            }})
+            path.write_text("\n".join(json.dumps(row) for row in rows), encoding="utf-8")
+            latest = parse_rollout(path).metrics("session")
+            self.assertIsNone(latest.five_hour_limit)
+            self.assertEqual(latest.weekly_limit.remaining_percent, 90.0)
+
     def test_latest_turn_scope_and_task_aliases(self):
         with tempfile.TemporaryDirectory() as td:
             p = Path(td) / "rollout-test.jsonl"

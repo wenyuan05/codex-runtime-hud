@@ -11,8 +11,113 @@ import ctypes
 import queue
 import sys
 import threading
+import time
 from pathlib import Path
 from typing import Any, Optional
+
+
+DEFAULT_TOGGLE_HOTKEY = "ctrl+alt+h"
+TOGGLE_HOTKEY_CHOICES = (
+    ("ctrl+alt+h", "Ctrl+Alt+H", 0x0002 | 0x0001, ord("H")),
+    ("ctrl+shift+h", "Ctrl+Shift+H", 0x0002 | 0x0004, ord("H")),
+    ("alt+shift+h", "Alt+Shift+H", 0x0001 | 0x0004, ord("H")),
+)
+_TOGGLE_HOTKEYS = {value: (label, modifiers, key) for value, label, modifiers, key in TOGGLE_HOTKEY_CHOICES}
+
+
+def normalize_toggle_hotkey(value: Any) -> str:
+    """Return a supported global toggle shortcut, or the default for invalid data."""
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"", "disabled", "none"}:
+            return ""
+        if normalized in _TOGGLE_HOTKEYS:
+            return normalized
+    return DEFAULT_TOGGLE_HOTKEY
+
+
+def toggle_hotkey_label(value: str) -> str:
+    definition = _TOGGLE_HOTKEYS.get(value)
+    return definition[0] if definition is not None else ""
+
+
+class WindowsGlobalHotkey:
+    """Own a RegisterHotKey message loop without blocking Tk's main thread."""
+
+    WM_HOTKEY = 0x0312
+    WM_QUIT = 0x0012
+    # Application IDs must stay in RegisterHotKey's 0x0000-0xBFFF range.
+    HOTKEY_ID = 0x4C48
+    MOD_NOREPEAT = 0x4000
+
+    def __init__(self, callback: Any) -> None:
+        self._callback = callback
+        self._thread: Optional[threading.Thread] = None
+        self._thread_id = 0
+        self._ready = threading.Event()
+        self._registered = False
+        self._error_code = 0
+
+    def register(self, shortcut: str) -> tuple[bool, int]:
+        self.close()
+        if not shortcut:
+            return True, 0
+        definition = _TOGGLE_HOTKEYS.get(shortcut)
+        if definition is None or sys.platform != "win32":
+            return False, 87  # ERROR_INVALID_PARAMETER
+        _label, modifiers, key = definition
+        self._ready.clear()
+        self._registered = False
+        self._error_code = 0
+        self._thread = threading.Thread(
+            target=self._message_loop,
+            args=(modifiers, key),
+            daemon=True,
+            name="codex-overlay-hotkey",
+        )
+        self._thread.start()
+        if not self._ready.wait(timeout=2.0):
+            self.close()
+            return False, 1460  # ERROR_TIMEOUT
+        return self._registered, self._error_code
+
+    def _message_loop(self, modifiers: int, key: int) -> None:
+        from ctypes import wintypes
+
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        self._thread_id = int(kernel32.GetCurrentThreadId())
+        registered = bool(user32.RegisterHotKey(None, self.HOTKEY_ID, modifiers | self.MOD_NOREPEAT, key))
+        self._registered = registered
+        self._error_code = 0 if registered else int(ctypes.get_last_error())
+        self._ready.set()
+        if not registered:
+            self._thread_id = 0
+            return
+        try:
+            message = wintypes.MSG()
+            while user32.GetMessageW(ctypes.byref(message), None, 0, 0) > 0:
+                if message.message == self.WM_HOTKEY and message.wParam == self.HOTKEY_ID:
+                    try:
+                        self._callback()
+                    except Exception:
+                        pass
+        finally:
+            user32.UnregisterHotKey(None, self.HOTKEY_ID)
+            self._registered = False
+            self._thread_id = 0
+
+    def close(self) -> None:
+        thread = self._thread
+        thread_id = self._thread_id
+        if thread is not None and thread.is_alive() and thread_id and sys.platform == "win32":
+            try:
+                ctypes.WinDLL("user32", use_last_error=True).PostThreadMessageW(thread_id, self.WM_QUIT, 0, 0)
+            except (AttributeError, OSError):
+                pass
+            thread.join(timeout=1.0)
+        self._thread = None
+        self._thread_id = 0
 
 
 def _enable_windows_dpi_awareness() -> None:
@@ -47,6 +152,7 @@ def run_gui(args: Any) -> int:
     from codex_runtime_hud import (
         IncrementalReaderPool,
         ParsedRollout,
+        RateLimitWindow,
         RolloutCandidate,
         SessionSelection,
         ViewMetrics,
@@ -82,7 +188,8 @@ def run_gui(args: Any) -> int:
         "selected_session_key": settings.get("selected_session_key", ""),
         "visible": True,
         "compact_size": settings.get("compact_size", (220, 112)),
-        "expanded_size": settings.get("expanded_size", (360, 214)),
+        "expanded_size": settings.get("expanded_size", (360, 244)),
+        "toggle_hotkey": normalize_toggle_hotkey(settings.get("toggle_hotkey", DEFAULT_TOGGLE_HOTKEY)),
     }
     if state["scope"] not in {"turn", "session"}:
         state["scope"] = "turn"
@@ -98,7 +205,7 @@ def run_gui(args: Any) -> int:
         return max(minimum[0], width), max(minimum[1], height)
 
     state["compact_size"] = valid_size(state["compact_size"], (220, 112), (180, 112))
-    state["expanded_size"] = valid_size(state["expanded_size"], (360, 214), (300, 214))
+    state["expanded_size"] = valid_size(state["expanded_size"], (360, 244), (300, 244))
 
     BG = "#18181a"
     SURFACE = "#1c1c1f"
@@ -143,6 +250,7 @@ def run_gui(args: Any) -> int:
             root.configure(bg=BG)
     topmost_var = tk.BooleanVar(value=state["always_on_top"])
     language_var = tk.StringVar(value=language_mode)
+    hotkey_var = tk.StringVar(value=state["toggle_hotkey"])
     try:
         root.attributes("-alpha", 0.98)
     except Exception:
@@ -160,6 +268,7 @@ def run_gui(args: Any) -> int:
     tray_queue: queue.Queue[str] = queue.Queue()
     tray_icon: dict[str, Any] = {"icon": None}
     tray_state: dict[str, Any] = {"quit": False}
+    hotkey_manager = WindowsGlobalHotkey(lambda: tray_queue.put("toggle_visibility"))
     context_menu: Optional[tk.Menu] = None
     session_popup: Optional[tk.Toplevel] = None
 
@@ -190,7 +299,7 @@ def run_gui(args: Any) -> int:
         return tuple(state["expanded_size"] if state["expanded"] else state["compact_size"])
 
     def resize_minimum() -> tuple[int, int]:
-        return (300, 214) if state["expanded"] else (180, 112)
+        return (300, 244) if state["expanded"] else (180, 112)
 
     def rounded_rect(x1: int, y1: int, x2: int, y2: int, radius: int, fill: str, tags: Any = ()) -> None:
         radius = max(1, min(radius, (x2 - x1) // 2, (y2 - y1) // 2))
@@ -231,6 +340,23 @@ def run_gui(args: Any) -> int:
             "reasoning": empty if usage_missing else fmt_num(metrics.usage.reasoning_output_tokens),
             "context": context,
         }
+
+    def quota_values(window: Optional[RateLimitWindow]) -> tuple[str, Optional[float], str]:
+        if window is None:
+            return tr(lang, "no_data"), None, ""
+        remaining = window.remaining_percent
+        reset_text = ""
+        if window.resets_at is not None:
+            seconds = max(0, int(window.resets_at - time.time()))
+            if seconds >= 86_400:
+                days, hours = divmod(seconds // 3_600, 24)
+                reset_text = f"↻{days}d{hours}h"
+            elif seconds >= 3_600:
+                hours, minutes = divmod(seconds // 60, 60)
+                reset_text = f"↻{hours}h{minutes}m"
+            else:
+                reset_text = f"↻{max(0, seconds // 60)}m"
+        return tr(lang, "quota_left", percent=f"{remaining:.0f}"), remaining, reset_text
 
     def draw_ui() -> None:
         nonlocal scope_bounds, session_bounds
@@ -299,13 +425,33 @@ def run_gui(args: Any) -> int:
             # leaving a large blank area when the user stretches the HUD.
             runtime_top = 126
             context_y = height - 10
-            runtime_bottom = max(runtime_top + 31, context_y - 30)
+            quota_top = context_y - 40
+            runtime_bottom = max(runtime_top + 31, quota_top - 30)
             runtime_row_step = max(31, (runtime_bottom - runtime_top) / 2)
             for index, (label, value) in enumerate(runtime):
                 x = 18 + (index % 3) * headline_step
                 y = runtime_top + (index // 3) * runtime_row_step
                 draw_text(x, y, label, UI_TINY, MUTED)
                 draw_text(x, y + 14, value, MONO, SECONDARY)
+
+            quota_gap = 14
+            quota_width = (width - 36 - quota_gap) / 2
+            quota_windows = (
+                (tr(lang, "five_hour"), metrics.five_hour_limit if metrics is not None else None),
+                (tr(lang, "weekly"), metrics.weekly_limit if metrics is not None else None),
+            )
+            for index, (label, window) in enumerate(quota_windows):
+                x = 18 + index * (quota_width + quota_gap)
+                value, remaining, reset_text = quota_values(window)
+                draw_text(x, quota_top, label, UI_TINY, MUTED)
+                draw_text(x + 34, quota_top, value, UI_TINY, SECONDARY)
+                if reset_text:
+                    draw_text(x + quota_width, quota_top, reset_text, UI_TINY, MUTED, "e")
+                bar_y = quota_top + 10
+                rounded_rect(x, bar_y, x + quota_width, bar_y + 5, 3, "#303035")
+                if remaining is not None and remaining > 0:
+                    bar_color = DANGER if remaining <= 10 else WARNING if remaining <= 30 else "#7f8998"
+                    rounded_rect(x, bar_y, x + max(3, int(quota_width * remaining / 100.0)), bar_y + 5, 3, bar_color)
 
             context_text, pct = format_context(metrics, parsed is None or metrics is None)
             draw_text(18, context_y, tr(lang, "context"), UI_TINY, MUTED)
@@ -365,6 +511,7 @@ def run_gui(args: Any) -> int:
                 "selected_session_key": state["selected_session_key"],
                 "compact_size": list(state["compact_size"]),
                 "expanded_size": list(state["expanded_size"]),
+                "toggle_hotkey": state["toggle_hotkey"],
             })
             save_settings(settings)
         except Exception:
@@ -384,9 +531,14 @@ def run_gui(args: Any) -> int:
         if visible:
             root.deiconify()
             root.attributes("-topmost", state["always_on_top"])
+            root.lift()
         else:
             persist_ui()
             root.withdraw()
+
+    def toggle_visible(_event: Any = None) -> str:
+        set_visible(not state["visible"])
+        return "break"
 
     def set_expanded(expanded: bool, persist: bool = True) -> None:
         expanded = bool(expanded)
@@ -458,6 +610,36 @@ def run_gui(args: Any) -> int:
         # pystray may cache labels on Windows; force the native tray menu to
         # re-evaluate its dynamic text/checked callbacks after a language
         # selection changes.
+        if tray_icon["icon"] is not None:
+            try:
+                refresh_tray_menu()
+            except Exception:
+                pass
+
+    def show_hotkey_error(shortcut: str) -> None:
+        try:
+            from tkinter import messagebox
+            messagebox.showerror(
+                tr(lang, "hotkey_unavailable_title"),
+                tr(lang, "hotkey_unavailable").format(shortcut=toggle_hotkey_label(shortcut)),
+                parent=root,
+            )
+        except Exception:
+            pass
+
+    def set_toggle_hotkey(shortcut: str, notify_failure: bool = True) -> None:
+        shortcut = normalize_toggle_hotkey(shortcut) if shortcut else ""
+        previous = state["toggle_hotkey"]
+        registered, _error_code = hotkey_manager.register(shortcut)
+        if not registered:
+            hotkey_manager.register(previous)
+            hotkey_var.set(previous)
+            if notify_failure:
+                show_hotkey_error(shortcut)
+            return
+        state["toggle_hotkey"] = shortcut
+        hotkey_var.set(shortcut)
+        persist_ui()
         if tray_icon["icon"] is not None:
             try:
                 refresh_tray_menu()
@@ -596,6 +778,7 @@ def run_gui(args: Any) -> int:
     def quit_app(_event: Any = None) -> None:
         persist_ui()
         tray_state["quit"] = True
+        hotkey_manager.close()
         if tray_icon["icon"] is not None:
             try:
                 tray_icon["icon"].stop()
@@ -625,6 +808,22 @@ def run_gui(args: Any) -> int:
         context_menu.add_separator()
         context_menu.add_checkbutton(label=tr(lang, "topmost"), variable=topmost_var, command=lambda: set_topmost(topmost_var.get()))
         context_menu.add_checkbutton(label=tr(lang, "startup"), command=lambda: set_startup_enabled(not startup_enabled()))
+        hotkey_menu = tk.Menu(context_menu, tearoff=False)
+        for shortcut, label, _modifiers, _key in TOGGLE_HOTKEY_CHOICES:
+            hotkey_menu.add_radiobutton(
+                label=label,
+                variable=hotkey_var,
+                value=shortcut,
+                command=lambda value=shortcut: set_toggle_hotkey(value),
+            )
+        hotkey_menu.add_separator()
+        hotkey_menu.add_radiobutton(
+            label=tr(lang, "hotkey_disabled"),
+            variable=hotkey_var,
+            value="",
+            command=lambda: set_toggle_hotkey(""),
+        )
+        context_menu.add_cascade(label=tr(lang, "hotkey"), menu=hotkey_menu)
         context_menu.add_separator()
         language_menu = tk.Menu(context_menu, tearoff=False)
         language_menu.add_radiobutton(label=tr(lang, "language_auto"), variable=language_var, value="auto", command=lambda: set_language("auto"))
@@ -634,6 +833,7 @@ def run_gui(args: Any) -> int:
         context_menu.add_separator()
         context_menu.add_command(label=tr(lang, "reset_position"), command=reset_position)
         context_menu.add_command(label=tr(lang, "copy"), command=copy_visible)
+        context_menu.add_command(label=tr(lang, "hide"), command=lambda: set_visible(False))
         context_menu.add_command(label=tr(lang, "quit"), command=quit_app)
 
     def on_press(event: Any) -> None:
@@ -740,6 +940,9 @@ def run_gui(args: Any) -> int:
     root.bind("<space>", toggle_expanded)
     root.protocol("WM_DELETE_WINDOW", lambda: set_visible(False))
 
+    hotkey_registered, _hotkey_error = hotkey_manager.register(state["toggle_hotkey"])
+    if state["toggle_hotkey"] and not hotkey_registered:
+        root.after(0, lambda: show_hotkey_error(state["toggle_hotkey"]))
     build_context_menu()
     root.attributes("-topmost", state["always_on_top"])
     move_window_to_saved_position()
@@ -767,12 +970,29 @@ def run_gui(args: Any) -> int:
                     checked=lambda item, key=candidate.key: state["session_selection_mode"] == "manual" and state["selected_session_key"] == key,
                     radio=True,
                 ))
+            hotkey_items = [
+                pystray.MenuItem(
+                    label,
+                    tray_action(f"hotkey:{shortcut}"),
+                    checked=lambda item, value=shortcut: state["toggle_hotkey"] == value,
+                    radio=True,
+                )
+                for shortcut, label, _modifiers, _key in TOGGLE_HOTKEY_CHOICES
+            ]
+            hotkey_items.append(pystray.Menu.SEPARATOR)
+            hotkey_items.append(pystray.MenuItem(
+                lambda item: tr(lang, "hotkey_disabled"),
+                tray_action("hotkey:"),
+                checked=lambda item: state["toggle_hotkey"] == "",
+                radio=True,
+            ))
             return pystray.Menu(
                 pystray.MenuItem(lambda item: tr(lang, "show"), tray_action("show")),
                 pystray.MenuItem(lambda item: tr(lang, "hide"), tray_action("hide")),
                 pystray.Menu.SEPARATOR,
                 pystray.MenuItem(lambda item: tr(lang, "sessions"), pystray.Menu(*session_items), enabled=lambda item: fixed_file is None),
                 pystray.MenuItem(lambda item: tr(lang, "language"), language_menu),
+                pystray.MenuItem(lambda item: tr(lang, "hotkey"), pystray.Menu(*hotkey_items)),
                 pystray.MenuItem(lambda item: tr(lang, "startup"), tray_action("startup"), checked=lambda item: startup_enabled()),
                 pystray.MenuItem(lambda item: tr(lang, "about"), tray_action("about")),
                 pystray.MenuItem(lambda item: tr(lang, "quit"), tray_action("quit")),
@@ -799,6 +1019,8 @@ def run_gui(args: Any) -> int:
                     set_visible(True)
                 elif action == "hide":
                     set_visible(False)
+                elif action == "toggle_visibility":
+                    toggle_visible()
                 elif action == "startup":
                     set_startup_enabled(not startup_enabled())
                 elif action == "session:auto":
@@ -807,6 +1029,8 @@ def run_gui(args: Any) -> int:
                     set_session_manual(action.split(":", 1)[1])
                 elif action.startswith("language:"):
                     set_language(action.split(":", 1)[1])
+                elif action.startswith("hotkey:"):
+                    set_toggle_hotkey(action.split(":", 1)[1])
                 elif action == "about":
                     try:
                         from tkinter import messagebox

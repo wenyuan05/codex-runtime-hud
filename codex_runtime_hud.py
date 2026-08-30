@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Codex Runtime HUD v0.4.2
+Codex Runtime HUD v0.4.3
 
 Read-only floating HUD for real-time current-turn performance in Codex Desktop / Codex CLI.
 
@@ -54,7 +54,7 @@ def codex_home_default() -> Path:
 APP_NAME = "CodexRuntimeHUD"
 APP_DISPLAY_NAME = "Codex Runtime HUD"
 LEGACY_APP_NAME = "CodexTokenOverlay"
-APP_VERSION = "0.4.2"
+APP_VERSION = "0.4.3"
 # Rollouts can contain an unmatched task_started after a crash, forced stop, or
 # older protocol transition. Do not expose such historical open turns as live
 # sessions forever; keep a short window for an active/waiting indication.
@@ -146,6 +146,10 @@ TRANSLATIONS = {
         "language_english": "English",
         "language_chinese": "简体中文",
         "topmost": "始终置顶",
+        "hotkey": "显示/隐藏快捷键",
+        "hotkey_disabled": "禁用",
+        "hotkey_unavailable_title": "快捷键不可用",
+        "hotkey_unavailable": "无法注册 {shortcut}，可能已被其他应用占用。",
         "reset_position": "重置位置",
         "local_only": "仅本地 · 只读 session · 不联网",
         "model_idle": "空闲",
@@ -157,6 +161,9 @@ TRANSLATIONS = {
         "speed": "Speed",
         "reasoning": "Reasoning",
         "context": "Context",
+        "five_hour": "5h",
+        "weekly": "周",
+        "quota_left": "余 {percent}%",
         "sessions": "会话",
         "sessions_auto": "自动跟随",
         "sessions_manual": "手动选择",
@@ -190,6 +197,10 @@ TRANSLATIONS = {
         "language_english": "English",
         "language_chinese": "简体中文",
         "topmost": "Always on top",
+        "hotkey": "Show/Hide shortcut",
+        "hotkey_disabled": "Disabled",
+        "hotkey_unavailable_title": "Shortcut unavailable",
+        "hotkey_unavailable": "Could not register {shortcut}; another application may already be using it.",
         "reset_position": "Reset position",
         "local_only": "Local-only · Read-only session · No network",
         "model_idle": "Idle",
@@ -201,6 +212,9 @@ TRANSLATIONS = {
         "speed": "Speed",
         "reasoning": "Reasoning",
         "context": "Context",
+        "five_hour": "5h",
+        "weekly": "Week",
+        "quota_left": "{percent}% left",
         "sessions": "Sessions",
         "sessions_auto": "Follow automatically",
         "sessions_manual": "Manual selection",
@@ -370,6 +384,54 @@ class Usage:
         return max(0.0, min(100.0, self.cached_input_tokens / self.input_tokens * 100.0))
 
 
+@dataclass(frozen=True)
+class RateLimitWindow:
+    used_percent: float
+    window_minutes: int
+    resets_at: Optional[float] = None
+
+    @classmethod
+    def from_obj(cls, obj: Any) -> Optional["RateLimitWindow"]:
+        if not isinstance(obj, dict) or obj.get("used_percent") is None:
+            return None
+        window_minutes = as_int(obj.get("window_minutes"))
+        if window_minutes <= 0:
+            return None
+        return cls(
+            used_percent=max(0.0, min(100.0, as_num(obj.get("used_percent")))),
+            window_minutes=window_minutes,
+            resets_at=parse_ts(obj.get("resets_at")),
+        )
+
+    @property
+    def remaining_percent(self) -> float:
+        return max(0.0, min(100.0, 100.0 - self.used_percent))
+
+
+@dataclass(frozen=True)
+class RateLimits:
+    five_hour: Optional[RateLimitWindow] = None
+    weekly: Optional[RateLimitWindow] = None
+
+    @classmethod
+    def from_obj(cls, obj: Any) -> "RateLimits":
+        if not isinstance(obj, dict):
+            return cls()
+        five_hour = None
+        weekly = None
+        for key in ("primary", "secondary"):
+            window = RateLimitWindow.from_obj(obj.get(key))
+            if window is None:
+                continue
+            # The wire order is not stable: some plans expose Weekly as the
+            # primary window and omit 5h. Identify each quota by its duration.
+            if 240 <= window.window_minutes <= 360:
+                five_hour = window
+            elif 9_000 <= window.window_minutes <= 11_000:
+                weekly = window
+        return cls(five_hour=five_hour, weekly=weekly)
+
+
 @dataclass
 class ToolSpan:
     call_id: str
@@ -510,6 +572,8 @@ class ViewMetrics:
     current_context_tokens: Optional[int] = None
     exact_response_count: int = 0
     usage_pending: bool = False
+    five_hour_limit: Optional[RateLimitWindow] = None
+    weekly_limit: Optional[RateLimitWindow] = None
 
     def status_line(self, include_model: bool = True, lang: str = "zh-CN") -> str:
         parts: list[str] = []
@@ -635,6 +699,7 @@ class RolloutParser:
         self.current_total_usage = Usage()
         self.latest_total_usage = Usage()
         self.current_context_tokens: Optional[int] = None
+        self.rate_limits = RateLimits()
 
         self.turns: list[Turn] = []
         self.turn_by_id: dict[str, Turn] = {}
@@ -761,6 +826,8 @@ class RolloutParser:
                 self.active_turn = None
 
     def token_count(self, payload: dict[str, Any]) -> None:
+        if isinstance(payload.get("rate_limits"), dict):
+            self.rate_limits = RateLimits.from_obj(payload.get("rate_limits"))
         info = payload.get("info")
         if not isinstance(info, dict):
             return
@@ -984,6 +1051,8 @@ class RolloutParser:
             current_context_tokens=self.current_context_tokens,
             exact_response_count=turn.exact_response_count,
             usage_pending=(turn.exact_response_count == 0 and not turn.token_usage_seen),
+            five_hour_limit=self.rate_limits.five_hour,
+            weekly_limit=self.rate_limits.weekly,
         )
 
     def session_metrics(self, active_file: bool) -> ViewMetrics:
@@ -1034,6 +1103,8 @@ class RolloutParser:
             current_context_tokens=self.current_context_tokens,
             exact_response_count=exact_count,
             usage_pending=(exact_count == 0 and self.token_usage_events == 0),
+            five_hour_limit=self.rate_limits.five_hour,
+            weekly_limit=self.rate_limits.weekly,
         )
 
 

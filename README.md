@@ -8,7 +8,7 @@
 
 A Windows always-on-top HUD focused on real-time, single-turn performance for Codex Desktop / Codex CLI. It follows the active root user rollout as JSONL is appended and never calls an API.
 
-Current release: **v0.4.2**. The HUD supports drag-resizing with responsive compact and expanded layouts; the session picker always closes when clicking outside it.
+Current release: **v0.4.3**. The expanded HUD shows remaining 5h and Weekly allowance with reset countdowns. The context menu can hide the window directly and configure a global Show/Hide shortcut; the default is `Ctrl+Alt+H`.
 
 ## What it monitors
 
@@ -19,7 +19,7 @@ The default view is the current turn, not a historical dashboard. While a turn i
 - Read-only access to local Codex session files under `~/.codex/sessions` and `~/.codex/archived_sessions`.
 - Does **not** read `auth.json`, API keys, `.env` files, prompts outside the rollout file, or credentials.
 - The application makes no network connections. GitHub, Python and PyInstaller are only used for distribution/building.
-- Settings contain only window coordinates and UI preferences: `%LOCALAPPDATA%\CodexRuntimeHUD\settings.json`.
+- Settings contain only window coordinates and UI preferences, including the selected global shortcut: `%LOCALAPPDATA%\CodexRuntimeHUD\settings.json`.
   UI preferences include `expanded`, `scope`, `language` (`auto`, `en`, `zh-CN`), `always_on_top` and local session-selection mode. The session picker always closes when clicking outside it. `Auto` follows the Windows UI language; an explicit English/Chinese choice is remembered until changed back to `Auto`.
 - Existing settings from `%LOCALAPPDATA%\CodexTokenOverlay\settings.json` are read as a one-way compatibility fallback; new saves use the `CodexRuntimeHUD` folder.
 
@@ -37,7 +37,7 @@ Verify the download with `SHA256SUMS.txt`:
 Get-FileHash .\CodexRuntimeHUD.exe -Algorithm SHA256
 ```
 
-Double-click the EXE. The compact HUD shows a Sessions button, scope, Cache, In and Out; click the body to expand the detailed panel. Click Sessions to open a scrollable local root-session list. `Follow automatically` keeps the stable latest-root behavior; selecting a session locks the HUD to that session until you select Auto again. Session rows use only the local `cwd` project folder plus a short thread ID, never prompt text. The picker always closes when clicking outside it. Click Current/Session to switch scope without expanding. Drag from the background to move it; drag the diagonal handle in the lower-right corner to resize it. Compact and expanded mode sizes are remembered separately. A right-click opens the native menu for scope, sessions, Always on top, startup, language, reset position, copy and Quit. The tray icon mirrors Sessions alongside Show/Hide, Start with Windows, Language, About and Quit. Startup is opt-in and uses the current user's registry only. Position and UI preferences persist across launches.
+Double-click the EXE. The compact HUD shows a Sessions button, scope, Cache, In and Out; click the body to expand the detailed panel. The expanded view also shows remaining 5h and Weekly allowance plus reset countdowns from the latest `rate_limits` snapshot in the rollout. A missing quota window is shown as `—`; the application does not make a network request to fill it. Click Sessions to open a scrollable local root-session list. `Follow automatically` keeps the stable latest-root behavior; selecting a session locks the HUD to that session until you select Auto again. Session rows use only the local `cwd` project folder plus a short thread ID, never prompt text. The picker always closes when clicking outside it. Click Current/Session to switch scope without expanding. Drag from the background to move it; drag the diagonal handle in the lower-right corner to resize it. Compact and expanded mode sizes are remembered separately. A right-click opens the native menu for Hide window, scope, sessions, Always on top, startup, the global Show/Hide shortcut, language, reset position, copy and Quit. The tray icon provides the same shortcut setting alongside Sessions, Show/Hide, Start with Windows, Language, About and Quit. Choose `Ctrl+Alt+H` (default), `Ctrl+Shift+H`, `Alt+Shift+H`, or Disabled. If another application already owns a shortcut, the HUD keeps the previous setting and reports the conflict. Startup is opt-in and uses the current user's registry only. Position and UI preferences persist across launches.
 
 ## Run from source
 
@@ -69,7 +69,9 @@ The result is `dist\CodexRuntimeHUD.exe` plus `dist\SHA256SUMS.txt`. The same ch
 - Click Sessions: choose an eligible local root thread, or return to automatic following.
 - Drag the body: move and persist the HUD position.
 - Click Turn/Session: switch current-turn or cumulative-session metrics.
-- Middle-click/Ctrl+C: copy visible text. Right-click/Escape: hide to tray.
+- Middle-click/Ctrl+C: copy visible text. Right-click opens the native settings menu; Escape hides to the tray.
+- `Ctrl+Alt+H`: show or hide the HUD globally; change or disable it from Show/Hide shortcut in the context or tray menu.
+- 5h/Weekly windows are identified by `window_minutes`, not by `primary`/`secondary` order; both percentage and bar represent the remaining allowance.
 - Cache hit is `cached_input_tokens / input_tokens`.
 - Current-turn usage prefers exact `raw_response_completed` usage and otherwise uses cumulative deltas.
 - Tool time is an interval union, so overlapping tools are not double-counted.

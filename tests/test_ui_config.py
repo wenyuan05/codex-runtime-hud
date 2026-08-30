@@ -4,6 +4,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from codex_runtime_hud import load_settings, save_settings
+from overlay_ui import DEFAULT_TOGGLE_HOTKEY, normalize_toggle_hotkey, toggle_hotkey_label
 
 
 class UiConfigTests(unittest.TestCase):
@@ -12,12 +13,19 @@ class UiConfigTests(unittest.TestCase):
             path = Path(temp) / "settings.json"
             with patch("codex_runtime_hud.settings_path", return_value=path):
                 save_settings({"x": 100, "y": 80, "expanded": True, "scope": "session", "language": "en", "always_on_top": False,
-                               "session_selection_mode": "manual", "selected_session_key": "thread:test"})
+                               "session_selection_mode": "manual", "selected_session_key": "thread:test", "toggle_hotkey": "ctrl+shift+h"})
                 self.assertEqual(load_settings()["scope"], "session")
                 self.assertTrue(load_settings()["expanded"])
                 self.assertFalse(load_settings()["always_on_top"])
                 self.assertEqual(load_settings()["session_selection_mode"], "manual")
                 self.assertEqual(load_settings()["selected_session_key"], "thread:test")
+                self.assertEqual(load_settings()["toggle_hotkey"], "ctrl+shift+h")
+
+    def test_toggle_hotkey_normalization(self):
+        self.assertEqual(normalize_toggle_hotkey(" CTRL+ALT+H "), "ctrl+alt+h")
+        self.assertEqual(normalize_toggle_hotkey("disabled"), "")
+        self.assertEqual(normalize_toggle_hotkey("not-a-shortcut"), DEFAULT_TOGGLE_HOTKEY)
+        self.assertEqual(toggle_hotkey_label("ctrl+shift+h"), "Ctrl+Shift+H")
 
     def test_corrupt_settings_fall_back_to_defaults(self):
         with tempfile.TemporaryDirectory() as temp:
