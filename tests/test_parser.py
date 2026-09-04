@@ -9,6 +9,78 @@ from codex_runtime_hud import IncrementalReaderPool, IncrementalRolloutReader, R
 ROWS = [{'timestamp': '2026-08-14T00:00:00Z', 'type': 'event_msg', 'payload': {'type': 'task_started', 'turn_id': 't1', 'started_at': 1786665600, 'model_context_window': 200000}}, {'timestamp': '2026-08-14T00:00:00.1Z', 'type': 'event_msg', 'payload': {'type': 'thread_settings_applied', 'thread_settings': {'model': 'gpt-5.6-luna'}}}, {'timestamp': '2026-08-14T00:00:03Z', 'type': 'event_msg', 'payload': {'type': 'raw_response_completed', 'response_id': 'r1', 'token_usage': {'input_tokens': 100000, 'cached_input_tokens': 95000, 'cache_write_input_tokens': 0, 'output_tokens': 5000, 'reasoning_output_tokens': 1000, 'total_tokens': 106000}}}, {'timestamp': '2026-08-14T00:00:10Z', 'type': 'event_msg', 'payload': {'type': 'token_count', 'info': {'total_token_usage': {'input_tokens': 100000, 'cached_input_tokens': 95000, 'cache_write_input_tokens': 0, 'output_tokens': 5000, 'reasoning_output_tokens': 1000, 'total_tokens': 106000}, 'last_token_usage': {'input_tokens': 100000, 'cached_input_tokens': 95000, 'cache_write_input_tokens': 0, 'output_tokens': 5000, 'reasoning_output_tokens': 1000, 'total_tokens': 106000}, 'model_context_window': 200000}, 'rate_limits': None}}, {'timestamp': '2026-08-14T00:00:10Z', 'type': 'event_msg', 'payload': {'type': 'task_complete', 'turn_id': 't1', 'started_at': 1786665600, 'completed_at': 1786665610, 'duration_ms': 10000, 'time_to_first_token_ms': 900, 'last_agent_message': 'done'}}, {'timestamp': '2026-08-14T00:01:00Z', 'type': 'event_msg', 'payload': {'type': 'task_started', 'turn_id': 't2', 'started_at': 1786665660, 'model_context_window': 200000}}, {'timestamp': '2026-08-14T00:01:02Z', 'type': 'event_msg', 'payload': {'type': 'exec_command_begin', 'call_id': 'c1', 'turn_id': 't2', 'started_at_ms': 1786665662000, 'command': ['git', 'status'], 'cwd': '.'}}, {'timestamp': '2026-08-14T00:01:03Z', 'type': 'event_msg', 'payload': {'type': 'mcp_tool_call_begin', 'call_id': 'c2', 'turn_id': 't2', 'invocation': {'server': 'x', 'tool': 'read', 'arguments': {}}}}, {'timestamp': '2026-08-14T00:01:05Z', 'type': 'event_msg', 'payload': {'type': 'exec_command_end', 'call_id': 'c1', 'turn_id': 't2', 'completed_at_ms': 1786665665000, 'command': ['git', 'status'], 'cwd': '.'}}, {'timestamp': '2026-08-14T00:01:07Z', 'type': 'event_msg', 'payload': {'type': 'mcp_tool_call_end', 'call_id': 'c2', 'turn_id': 't2', 'duration': '4s', 'result': {'Ok': {}}}}, {'timestamp': '2026-08-14T00:01:15Z', 'type': 'event_msg', 'payload': {'type': 'raw_response_completed', 'response_id': 'r2', 'token_usage': {'input_tokens': 20000, 'cached_input_tokens': 18000, 'cache_write_input_tokens': 0, 'output_tokens': 2000, 'reasoning_output_tokens': 300, 'total_tokens': 22300}}}, {'timestamp': '2026-08-14T00:01:20Z', 'type': 'event_msg', 'payload': {'type': 'token_count', 'info': {'total_token_usage': {'input_tokens': 120000, 'cached_input_tokens': 113000, 'cache_write_input_tokens': 0, 'output_tokens': 7000, 'reasoning_output_tokens': 1300, 'total_tokens': 128300}, 'last_token_usage': {'input_tokens': 20000, 'cached_input_tokens': 18000, 'cache_write_input_tokens': 0, 'output_tokens': 2000, 'reasoning_output_tokens': 300, 'total_tokens': 22300}, 'model_context_window': 200000}, 'rate_limits': None}}, {'timestamp': '2026-08-14T00:01:20Z', 'type': 'event_msg', 'payload': {'type': 'task_complete', 'turn_id': 't2', 'started_at': 1786665660, 'completed_at': 1786665680, 'duration_ms': 20000, 'time_to_first_token_ms': 800, 'last_agent_message': 'done'}}]
 
 class HudTests(unittest.TestCase):
+    def test_cumulative_usage_rebases_after_nonzero_counter_reset(self):
+        rows = [
+            {"timestamp": "2026-09-03T00:00:00Z", "type": "event_msg", "payload": {
+                "type": "token_count",
+                "info": {
+                    "total_token_usage": {"input_tokens": 900, "cached_input_tokens": 700, "output_tokens": 100, "total_tokens": 1000},
+                    "last_token_usage": {"input_tokens": 900, "cached_input_tokens": 700, "output_tokens": 100, "total_tokens": 1000},
+                },
+                "rate_limits": None,
+            }},
+            {"timestamp": "2026-09-04T00:00:00Z", "type": "event_msg", "payload": {
+                "type": "task_started", "turn_id": "after-restart",
+            }},
+            # A zero fill object must not create an accounting epoch or make
+            # the turn look like it has real zero-token usage.
+            {"timestamp": "2026-09-04T00:00:01Z", "type": "event_msg", "payload": {
+                "type": "token_count",
+                "info": {"total_token_usage": {}, "last_token_usage": {}},
+                "rate_limits": None,
+            }},
+            {"timestamp": "2026-09-04T00:00:02Z", "type": "event_msg", "payload": {
+                "type": "token_count",
+                "info": {
+                    "total_token_usage": {"input_tokens": 180, "cached_input_tokens": 120, "output_tokens": 20, "total_tokens": 200},
+                    "last_token_usage": {"input_tokens": 180, "cached_input_tokens": 120, "output_tokens": 20, "total_tokens": 200},
+                },
+                "rate_limits": None,
+            }},
+            {"timestamp": "2026-09-04T00:00:03Z", "type": "event_msg", "payload": {
+                "type": "token_count",
+                "info": {
+                    "total_token_usage": {"input_tokens": 300, "cached_input_tokens": 230, "output_tokens": 50, "total_tokens": 350},
+                    "last_token_usage": {"input_tokens": 120, "cached_input_tokens": 110, "output_tokens": 30, "total_tokens": 150},
+                },
+                "rate_limits": None,
+            }},
+            {"timestamp": "2026-09-04T00:00:04Z", "type": "event_msg", "payload": {
+                "type": "task_complete", "turn_id": "after-restart", "duration_ms": 4000,
+            }},
+        ]
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "rollout-reset.jsonl"
+            path.write_text("\n".join(json.dumps(row) for row in rows), encoding="utf-8")
+            parsed = parse_rollout(path)
+
+            turn = parsed.metrics("turn")
+            self.assertFalse(turn.usage_pending)
+            self.assertEqual(turn.usage.input_tokens, 300)
+            self.assertEqual(turn.usage.cached_input_tokens, 230)
+            self.assertEqual(turn.usage.output_tokens, 50)
+            self.assertAlmostEqual(turn.usage.cache_hit, 76.6667, places=3)
+
+            session = parsed.metrics("session")
+            self.assertEqual(session.usage.input_tokens, 1200)
+            self.assertEqual(session.usage.output_tokens, 150)
+            self.assertEqual(parsed.parser.usage_reset_events, 1)
+
+    def test_zero_token_snapshot_keeps_new_turn_pending(self):
+        rows = [
+            {"timestamp": "2026-09-04T00:00:00Z", "type": "event_msg", "payload": {"type": "task_started", "turn_id": "pending"}},
+            {"timestamp": "2026-09-04T00:00:01Z", "type": "event_msg", "payload": {
+                "type": "token_count", "info": {"total_token_usage": {}, "last_token_usage": {}}, "rate_limits": None,
+            }},
+        ]
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "rollout-zero-fill.jsonl"
+            path.write_text("\n".join(json.dumps(row) for row in rows), encoding="utf-8")
+            metrics = parse_rollout(path).metrics("turn")
+            self.assertTrue(metrics.usage_pending)
+            self.assertEqual(metrics.usage.input_tokens, 0)
+            self.assertEqual(metrics.usage.output_tokens, 0)
+
     def test_rate_limits_are_identified_by_window_duration(self):
         rows = [
             {"timestamp": "2026-08-30T00:00:00Z", "type": "event_msg", "payload": {"type": "task_started", "turn_id": "quota"}},

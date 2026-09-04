@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Codex Runtime HUD v0.4.3
+Codex Runtime HUD v0.4.4
 
 Read-only floating HUD for real-time current-turn performance in Codex Desktop / Codex CLI.
 
@@ -54,7 +54,7 @@ def codex_home_default() -> Path:
 APP_NAME = "CodexRuntimeHUD"
 APP_DISPLAY_NAME = "Codex Runtime HUD"
 LEGACY_APP_NAME = "CodexTokenOverlay"
-APP_VERSION = "0.4.3"
+APP_VERSION = "0.4.4"
 # Rollouts can contain an unmatched task_started after a crash, forced stop, or
 # older protocol transition. Do not expose such historical open turns as live
 # sessions forever; keep a short window for an active/waiting indication.
@@ -383,6 +383,17 @@ class Usage:
             return None
         return max(0.0, min(100.0, self.cached_input_tokens / self.input_tokens * 100.0))
 
+    @property
+    def has_counts(self) -> bool:
+        return any((
+            self.input_tokens,
+            self.cached_input_tokens,
+            self.cache_write_input_tokens,
+            self.output_tokens,
+            self.reasoning_output_tokens,
+            self.total_tokens,
+        ))
+
 
 @dataclass(frozen=True)
 class RateLimitWindow:
@@ -698,6 +709,9 @@ class RolloutParser:
 
         self.current_total_usage = Usage()
         self.latest_total_usage = Usage()
+        self.raw_total_usage = Usage()
+        self.raw_total_usage_seen = False
+        self.usage_reset_events = 0
         self.current_context_tokens: Optional[int] = None
         self.rate_limits = RateLimits()
 
@@ -832,11 +846,22 @@ class RolloutParser:
         if not isinstance(info, dict):
             return
         total = Usage.from_obj(info.get("total_token_usage"))
-        # TokenUsageInfo is cumulative. A zero object can appear in synthetic/fill paths;
-        # only move the main snapshot forward when it looks non-decreasing.
-        if total.total_tokens >= self.latest_total_usage.total_tokens:
-            self.latest_total_usage = total
-            self.current_total_usage = total
+        # TokenUsageInfo is cumulative only within one Codex runtime/accounting
+        # epoch. A resumed thread can keep appending to the same rollout after
+        # that counter restarts from a smaller non-zero value. Convert the raw
+        # snapshots into one logical monotonic total so turn baselines remain
+        # valid across those resets. Ignore an all-zero synthetic/fill object.
+        if total.has_counts:
+            if not self.raw_total_usage_seen:
+                self.current_total_usage = total
+                self.raw_total_usage_seen = True
+            elif total.total_tokens >= self.raw_total_usage.total_tokens:
+                self.current_total_usage = self.current_total_usage + (total - self.raw_total_usage)
+            else:
+                self.current_total_usage = self.current_total_usage + total
+                self.usage_reset_events += 1
+            self.raw_total_usage = total
+            self.latest_total_usage = self.current_total_usage
 
         last = Usage.from_obj(info.get("last_token_usage"))
         self.token_usage_events += 1
@@ -851,7 +876,9 @@ class RolloutParser:
         if turn is not None:
             turn.usage_latest = self.current_total_usage
             turn.last_token_usage = last
-            turn.token_usage_seen = True
+            turn.token_usage_seen = turn.token_usage_seen or last.has_counts or (
+                self.current_total_usage.total_tokens > turn.usage_baseline.total_tokens
+            )
             if cw > 0:
                 turn.context_window = cw
 
@@ -1626,6 +1653,8 @@ def diagnostic(parsed: ParsedRollout, m: ViewMetrics) -> str:
     if parsed.parser.tool_timing_sources:
         source_text = ", ".join(f"{key}:{value}" for key, value in sorted(parsed.parser.tool_timing_sources.items()))
         bits.append(f"timing={source_text}")
+    if parsed.parser.usage_reset_events:
+        bits.append(f"usage_resets={parsed.parser.usage_reset_events}")
     return " · ".join(bits)
 
 

@@ -8,7 +8,7 @@
 
 这是一个专注于 Codex Desktop / Codex CLI **单轮实时表现**的 Windows 悬浮窗。它会跟随 root user rollout 的 JSONL 增量写入实时刷新，不调用任何 API。
 
-当前版本：**v0.4.3**。展开视图新增 `5h` 与周额度剩余比例/重置倒计时；悬浮窗右键菜单可直接隐藏窗口，并可设置全局显示/隐藏快捷键（默认 `Ctrl+Alt+H`）。
+下一版本：**v0.4.4**。修复同一 rollout 跨 Codex 重启/恢复后累计 Token 重新起算，导致 Cache、In、Out 显示为 `— / 0 / 0` 的问题。
 
 ## 监控重点
 
@@ -73,13 +73,13 @@ Set-ExecutionPolicy -Scope Process Bypass
 - `Ctrl+Alt+H`：在任意应用中显示/隐藏悬浮窗；可在右键或托盘菜单的“显示/隐藏快捷键”中更换或禁用。
 - `5h`/周额度按 `window_minutes` 识别，不依赖 `primary`/`secondary` 顺序；进度条和百分比都表示剩余额度。
 - 缓存命中率 = `cached_input_tokens / input_tokens`。
-- 本轮优先使用精确的 `raw_response_completed` usage，否则使用累计值差分。
+- 本轮优先使用精确的 `raw_response_completed` usage，否则使用累计值差分；同一 rollout 内累计计数非零回退时会自动开启新的计数周期，跨重启继续统计。
 - 工具耗时使用区间并集，并发工具不会重复计时。
 - 工具事件统一兼容 response-item call/output、legacy begin/end，以及未来的 `item_started/item_completed` wrapper。
 - 自动模式选择最新的合格 root user thread，并排除 subagent/memory consolidation；手动选择会锁定当前会话，切回自动模式后才恢复自动跟随；`--file` 可强制指定 rollout 并覆盖两种模式。
 - 会话状态只是持久化事件推断，不是进程监控；蓝色的 **运行中（等待更新）** 表示“最新 turn 未结束但近期没有新写入”，不保证任务此刻仍在执行。超过 24 小时没有更新的未匹配 turn 会被视为空闲。
 - 大型 rollout 会增量扫描 turn 元数据，不会因为最新 turn 位于文件中间而在启动时误选旧数据。
-- Codex 尚未持久化 `token_count` 或 response usage 时，Token 会显示为待定，而不是误报为 0。
+- Codex 尚未持久化有效的 `token_count` 或 response usage 时，Token 会显示为待定；全零占位快照不会误报为真实的 0 Token。
 
 ## 许可证
 

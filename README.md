@@ -8,7 +8,7 @@
 
 A Windows always-on-top HUD focused on real-time, single-turn performance for Codex Desktop / Codex CLI. It follows the active root user rollout as JSONL is appended and never calls an API.
 
-Current release: **v0.4.3**. The expanded HUD shows remaining 5h and Weekly allowance with reset countdowns. The context menu can hide the window directly and configure a global Show/Hide shortcut; the default is `Ctrl+Alt+H`.
+Next release: **v0.4.4**. This fixes Cache/In/Out showing `— / 0 / 0` when Codex restarts or resumes a long-lived rollout with a reset cumulative token counter.
 
 ## What it monitors
 
@@ -73,13 +73,13 @@ The result is `dist\CodexRuntimeHUD.exe` plus `dist\SHA256SUMS.txt`. The same ch
 - `Ctrl+Alt+H`: show or hide the HUD globally; change or disable it from Show/Hide shortcut in the context or tray menu.
 - 5h/Weekly windows are identified by `window_minutes`, not by `primary`/`secondary` order; both percentage and bar represent the remaining allowance.
 - Cache hit is `cached_input_tokens / input_tokens`.
-- Current-turn usage prefers exact `raw_response_completed` usage and otherwise uses cumulative deltas.
+- Current-turn usage prefers exact `raw_response_completed` usage and otherwise uses cumulative deltas. A non-zero cumulative counter regression starts a new accounting epoch so resumed rollouts remain countable across restarts.
 - Tool time is an interval union, so overlapping tools are not double-counted.
 - Tool events are normalized from response-item call/output pairs, legacy begin/end events, and future `item_started/item_completed` wrappers.
 - Automatic selection follows the latest eligible root user thread and excludes subagent/memory-consolidation sessions. A manual selection is locked until switched back to Auto; `--file` overrides both modes.
 - Session status is an estimate from persisted events, not a process monitor; blue **Running (waiting for update)** means “the latest turn is unfinished but recently quiet,” not a guarantee that the task is still executing. Unmatched turns with no writes for 24 hours are treated as idle.
 - Large rollouts are scanned incrementally for turn metadata, so a newer turn in the middle of a file is not mistaken for stale startup data.
-- Token usage may remain pending until Codex persists a `token_count` or response-usage event.
+- Token usage remains pending until Codex persists a meaningful `token_count` or response-usage event; an all-zero fill snapshot is not treated as real zero-token usage.
 
 ## License
 
