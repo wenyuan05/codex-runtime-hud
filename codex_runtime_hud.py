@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Codex Runtime HUD v0.4.4
+Codex Runtime HUD v0.4.5
 
 Read-only floating HUD for real-time current-turn performance in Codex Desktop / Codex CLI.
 
@@ -54,7 +54,7 @@ def codex_home_default() -> Path:
 APP_NAME = "CodexRuntimeHUD"
 APP_DISPLAY_NAME = "Codex Runtime HUD"
 LEGACY_APP_NAME = "CodexTokenOverlay"
-APP_VERSION = "0.4.4"
+APP_VERSION = "0.4.5"
 # Rollouts can contain an unmatched task_started after a crash, forced stop, or
 # older protocol transition. Do not expose such historical open turns as live
 # sessions forever; keep a short window for an active/waiting indication.
@@ -423,6 +423,23 @@ class RateLimitWindow:
 class RateLimits:
     five_hour: Optional[RateLimitWindow] = None
     weekly: Optional[RateLimitWindow] = None
+
+    @property
+    def has_windows(self) -> bool:
+        return self.five_hour is not None or self.weekly is not None
+
+    @classmethod
+    def from_codex_obj(cls, obj: Any) -> Optional["RateLimits"]:
+        """Parse the standard Codex allowance without mixing limit families."""
+        if not isinstance(obj, dict):
+            return None
+        limit_id = str(obj.get("limit_id") or "").strip().lower()
+        # Older rollout records did not include limit_id. Keep accepting those,
+        # but do not let gpt-reserve/base_model_inference or premium snapshots
+        # replace the standard 5h + weekly Codex allowance.
+        if limit_id not in {"", "codex"}:
+            return None
+        return cls.from_obj(obj)
 
     @classmethod
     def from_obj(cls, obj: Any) -> "RateLimits":
@@ -840,8 +857,9 @@ class RolloutParser:
                 self.active_turn = None
 
     def token_count(self, payload: dict[str, Any]) -> None:
-        if isinstance(payload.get("rate_limits"), dict):
-            self.rate_limits = RateLimits.from_obj(payload.get("rate_limits"))
+        rate_limits = RateLimits.from_codex_obj(payload.get("rate_limits"))
+        if rate_limits is not None:
+            self.rate_limits = rate_limits
         info = payload.get("info")
         if not isinstance(info, dict):
             return
@@ -1339,6 +1357,10 @@ class RolloutCandidate:
     eligible: bool = False
     priority: int = 0
     archived: bool = False
+    five_hour_limit: Optional[RateLimitWindow] = None
+    five_hour_limit_ts: Optional[float] = None
+    weekly_limit: Optional[RateLimitWindow] = None
+    weekly_limit_ts: Optional[float] = None
 
     @property
     def key(self) -> str:
@@ -1434,6 +1456,16 @@ def _feed_candidate_line(candidate: RolloutCandidate, raw: bytes) -> None:
         candidate.thread_id = str(payload.get("thread_id") or payload.get("id") or "")
         candidate.session_id = str(payload.get("session_id") or "")
     event_type = str(payload.get("type", "") or "").lower()
+    if event_type == "token_count":
+        limits = RateLimits.from_codex_obj(payload.get("rate_limits"))
+        if limits is not None:
+            observed_at = parse_ts(obj.get("timestamp")) or candidate.last_event_ts
+            if limits.five_hour is not None:
+                candidate.five_hour_limit = limits.five_hour
+                candidate.five_hour_limit_ts = observed_at
+            if limits.weekly is not None:
+                candidate.weekly_limit = limits.weekly
+                candidate.weekly_limit_ts = observed_at
     if event_type in RolloutParser.TURN_START_TYPES:
         started = parse_ts(payload.get("started_at")) or parse_ts(obj.get("timestamp"))
         if started is not None:
@@ -1511,12 +1543,34 @@ def _read_candidate_metadata(path: Path, archived: bool, state: _CandidateMetada
     return _finalize_candidate(candidate)
 
 
+def _latest_candidate_rate_limits(candidates: list[RolloutCandidate]) -> RateLimits:
+    """Combine the newest standard Codex window observations across rollouts."""
+    def newest(window_attr: str, timestamp_attr: str) -> Optional[RateLimitWindow]:
+        observed = [candidate for candidate in candidates if getattr(candidate, window_attr) is not None]
+        if not observed:
+            return None
+        candidate = max(
+            observed,
+            key=lambda item: (
+                getattr(item, timestamp_attr) or 0.0,
+                item.last_event_ts or 0.0,
+            ),
+        )
+        return getattr(candidate, window_attr)
+
+    return RateLimits(
+        five_hour=newest("five_hour_limit", "five_hour_limit_ts"),
+        weekly=newest("weekly_limit", "weekly_limit_ts"),
+    )
+
+
 class RootThreadSelector:
     """Select a stable root user rollout and ignore subagent sessions."""
 
     def __init__(self) -> None:
         self.current: Optional[Path] = None
         self.reason = "initial"
+        self.rate_limits = RateLimits()
         self._metadata_cache: dict[Path, _CandidateMetadataState] = {}
 
     def _metadata(self, path: Path, archived: bool) -> RolloutCandidate:
@@ -1539,6 +1593,10 @@ class RootThreadSelector:
             if any(candidate.eligible for candidate in active) and not archived:
                 break
         eligible = [candidate for candidate in active if candidate.eligible]
+        # Quotas are account-global, not properties of the task shown in the
+        # HUD. Collect each window independently so a weekly-only snapshot in
+        # one task cannot erase a newer 5h observation from another root task.
+        self.rate_limits = _latest_candidate_rate_limits(eligible)
         # Desktop can persist multiple rollout files for the same stable root
         # thread. Keep only its newest representative in the picker.
         by_key: dict[str, RolloutCandidate] = {}
@@ -1605,6 +1663,10 @@ class SessionSelection:
     def __init__(self, selector: Optional[RootThreadSelector] = None) -> None:
         self.selector = selector or RootThreadSelector()
         self._manual_active = False
+
+    @property
+    def rate_limits(self) -> RateLimits:
+        return self.selector.rate_limits
 
     def resolve(self, codex_home: Path, mode: str = "auto", selected_key: str = "") -> SessionResolution:
         candidates = sorted(self.selector.candidates(codex_home), key=RootThreadSelector.rank, reverse=True)

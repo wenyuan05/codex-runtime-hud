@@ -115,6 +115,92 @@ class HudTests(unittest.TestCase):
             self.assertIsNone(latest.five_hour_limit)
             self.assertEqual(latest.weekly_limit.remaining_percent, 90.0)
 
+    def test_non_codex_rate_limit_does_not_replace_standard_quota(self):
+        rows = [
+            {"timestamp": "2026-09-08T00:00:00Z", "type": "event_msg", "payload": {
+                "type": "token_count", "info": {},
+                "rate_limits": {
+                    "limit_id": "codex",
+                    "primary": {"used_percent": 61.0, "window_minutes": 300, "resets_at": 1788836552},
+                    "secondary": {"used_percent": 25.0, "window_minutes": 10080, "resets_at": 1789395043},
+                },
+            }},
+            {"timestamp": "2026-09-08T00:01:00Z", "type": "event_msg", "payload": {
+                "type": "token_count", "info": {},
+                "rate_limits": {
+                    "limit_id": "base_model_inference", "limit_name": "gpt-reserve",
+                    "primary": {"used_percent": 13.0, "window_minutes": 10080, "resets_at": 1789194173},
+                    "secondary": None,
+                },
+            }},
+            {"timestamp": "2026-09-08T00:02:00Z", "type": "event_msg", "payload": {
+                "type": "token_count", "info": {},
+                "rate_limits": {"limit_id": "premium", "primary": None, "secondary": None},
+            }},
+        ]
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "rollout-mixed-limit-families.jsonl"
+            path.write_text("\n".join(json.dumps(row) for row in rows), encoding="utf-8")
+            metrics = parse_rollout(path).metrics("session")
+            self.assertEqual(metrics.five_hour_limit.remaining_percent, 39.0)
+            self.assertEqual(metrics.weekly_limit.remaining_percent, 75.0)
+
+    def test_selector_combines_latest_standard_quota_across_root_rollouts(self):
+        with tempfile.TemporaryDirectory() as td:
+            home = Path(td)
+            sessions = home / "sessions"
+            sessions.mkdir()
+            standard = sessions / "rollout-standard.jsonl"
+            selected = sessions / "rollout-selected.jsonl"
+            standard.write_text("\n".join([
+                json.dumps({"type": "session_meta", "payload": {"thread_source": "user", "id": "standard"}}),
+                json.dumps({"timestamp": "2026-09-08T00:10:00Z", "type": "event_msg", "payload": {
+                    "type": "token_count", "info": {},
+                    "rate_limits": {
+                        "limit_id": "codex",
+                        "primary": {"used_percent": 61.0, "window_minutes": 300, "resets_at": 1788836552},
+                        "secondary": {"used_percent": 25.0, "window_minutes": 10080, "resets_at": 1789395043},
+                    },
+                }}),
+            ]) + "\n", encoding="utf-8")
+            selected.write_text("\n".join([
+                json.dumps({"type": "session_meta", "payload": {"thread_source": "user", "id": "selected"}}),
+                json.dumps({"timestamp": "2026-09-08T00:20:00Z", "type": "event_msg", "payload": {
+                    "type": "token_count", "info": {},
+                    "rate_limits": {
+                        "limit_id": "base_model_inference", "limit_name": "gpt-reserve",
+                        "primary": {"used_percent": 13.0, "window_minutes": 10080, "resets_at": 1789194173},
+                        "secondary": None,
+                    },
+                }}),
+            ]) + "\n", encoding="utf-8")
+
+            selector = RootThreadSelector()
+            selection = SessionSelection(selector)
+            candidates = selector.candidates(home)
+            selected_candidate = next(candidate for candidate in candidates if candidate.path == selected)
+            resolution = selection.resolve(home, "manual", selected_candidate.key)
+            self.assertEqual(resolution.candidate.path, selected)
+            self.assertEqual(selection.rate_limits.five_hour.remaining_percent, 39.0)
+            self.assertEqual(selection.rate_limits.weekly.remaining_percent, 75.0)
+
+            # A later standard weekly-only record updates the weekly window but
+            # must not erase the latest 5h observation from another root task.
+            with selected.open("a", encoding="utf-8", newline="\n") as handle:
+                handle.write(json.dumps({
+                    "timestamp": "2026-09-08T00:30:00Z", "type": "event_msg", "payload": {
+                        "type": "token_count", "info": {},
+                        "rate_limits": {
+                            "limit_id": "codex",
+                            "primary": {"used_percent": 26.0, "window_minutes": 10080, "resets_at": 1789395043},
+                            "secondary": None,
+                        },
+                    },
+                }) + "\n")
+            selection.resolve(home, "manual", selected_candidate.key)
+            self.assertEqual(selection.rate_limits.five_hour.remaining_percent, 39.0)
+            self.assertEqual(selection.rate_limits.weekly.remaining_percent, 74.0)
+
     def test_latest_turn_scope_and_task_aliases(self):
         with tempfile.TemporaryDirectory() as td:
             p = Path(td) / "rollout-test.jsonl"

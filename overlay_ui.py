@@ -153,6 +153,7 @@ def run_gui(args: Any) -> int:
         IncrementalReaderPool,
         ParsedRollout,
         RateLimitWindow,
+        RateLimits,
         RolloutCandidate,
         SessionSelection,
         ViewMetrics,
@@ -258,7 +259,14 @@ def run_gui(args: Any) -> int:
 
     canvas = tk.Canvas(root, bg=window_bg, bd=0, highlightthickness=0, cursor="hand2")
     canvas.pack(fill="both", expand=True)
-    cache: dict[str, Any] = {"path": None, "parsed": None, "metrics": None, "candidate": None, "candidates": []}
+    cache: dict[str, Any] = {
+        "path": None,
+        "parsed": None,
+        "metrics": None,
+        "candidate": None,
+        "candidates": [],
+        "rate_limits": None,
+    }
     readers = IncrementalReaderPool(max_readers=4)
     sessions = SessionSelection()
     scope_bounds = (0, 0, 0, 0)
@@ -898,7 +906,12 @@ def run_gui(args: Any) -> int:
 
     def render() -> None:
         parsed, path = cache.get("parsed"), cache.get("path")
-        cache["metrics"] = parsed.metrics(state["scope"]) if parsed is not None and path is not None else None
+        metrics = parsed.metrics(state["scope"]) if parsed is not None and path is not None else None
+        global_limits = cache.get("rate_limits")
+        if metrics is not None and isinstance(global_limits, RateLimits) and global_limits.has_windows:
+            metrics.five_hour_limit = global_limits.five_hour
+            metrics.weekly_limit = global_limits.weekly
+        cache["metrics"] = metrics
         draw_ui()
 
     def refresh_once() -> None:
@@ -906,9 +919,11 @@ def run_gui(args: Any) -> int:
         candidates: list[RolloutCandidate] = []
         if fixed_file is not None:
             path = fixed_file
+            cache["rate_limits"] = None
         else:
             resolution = sessions.resolve(codex_home, state["session_selection_mode"], state["selected_session_key"])
             candidate, candidates, path = resolution.candidate, resolution.candidates, resolution.candidate.path if resolution.candidate else None
+            cache["rate_limits"] = sessions.rate_limits
             if resolution.mode != state["session_selection_mode"] or resolution.selected_key != state["selected_session_key"]:
                 state["session_selection_mode"] = resolution.mode
                 state["selected_session_key"] = resolution.selected_key

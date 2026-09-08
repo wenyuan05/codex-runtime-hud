@@ -8,7 +8,7 @@
 
 这是一个专注于 Codex Desktop / Codex CLI **单轮实时表现**的 Windows 悬浮窗。它会跟随 root user rollout 的 JSONL 增量写入实时刷新，不调用任何 API。
 
-下一版本：**v0.4.4**。修复同一 rollout 跨 Codex 重启/恢复后累计 Token 重新起算，导致 Cache、In、Out 显示为 `— / 0 / 0` 的问题。
+下一版本：**v0.4.5**。标准 Codex 5h 与周额度改为跟随所有本地任务中最新的账户级快照，不再绑定当前选中的任务；`gpt-reserve` 等其他额度类型也不会再覆盖它们。
 
 ## 监控重点
 
@@ -22,6 +22,8 @@
 - 设置文件只保存窗口坐标和 UI 偏好：`%LOCALAPPDATA%\CodexRuntimeHUD\settings.json`。
   UI 偏好包括 `expanded`、`scope`、`language`（`auto`、`en`、`zh-CN`）、`always_on_top`、`toggle_hotkey` 和本地会话选择模式。会话列表固定在点击列表外时自动关闭。`Auto` 跟随 Windows UI 语言；手动选择中英文后会记住该选择，改回 `Auto` 才恢复自动检测。
 - 现有 `%LOCALAPPDATA%\CodexTokenOverlay\settings.json` 会作为一次性兼容回退读取；之后的新设置写入 `CodexRuntimeHUD` 文件夹。
+
+额度百分比属于账户级数据。HUD 会在所有符合条件的本地 root rollout 中分别合并最新的标准 `limit_id=codex` 5h 与周额度，因此手动选择其他任务也不会令额度停止刷新或被替换；其他额度类型会被有意忽略。
 
 ### 会话状态的局限
 

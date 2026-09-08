@@ -8,7 +8,7 @@
 
 A Windows always-on-top HUD focused on real-time, single-turn performance for Codex Desktop / Codex CLI. It follows the active root user rollout as JSONL is appended and never calls an API.
 
-Next release: **v0.4.4**. This fixes Cache/In/Out showing `— / 0 / 0` when Codex restarts or resumes a long-lived rollout with a reset cumulative token counter.
+Next release: **v0.4.5**. Standard Codex 5h and weekly quotas now follow the newest account-wide local snapshot instead of the selected task, and other limit families such as `gpt-reserve` can no longer replace them.
 
 ## What it monitors
 
@@ -22,6 +22,8 @@ The default view is the current turn, not a historical dashboard. While a turn i
 - Settings contain only window coordinates and UI preferences, including the selected global shortcut: `%LOCALAPPDATA%\CodexRuntimeHUD\settings.json`.
   UI preferences include `expanded`, `scope`, `language` (`auto`, `en`, `zh-CN`), `always_on_top` and local session-selection mode. The session picker always closes when clicking outside it. `Auto` follows the Windows UI language; an explicit English/Chinese choice is remembered until changed back to `Auto`.
 - Existing settings from `%LOCALAPPDATA%\CodexTokenOverlay\settings.json` are read as a one-way compatibility fallback; new saves use the `CodexRuntimeHUD` folder.
+
+Quota percentages are account-wide. The HUD combines the newest standard `limit_id=codex` 5h and weekly observations across eligible local root rollouts, so manually selecting another task does not freeze or replace them. Other limit families are intentionally ignored.
 
 ### Session status limitations
 
