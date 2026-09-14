@@ -675,6 +675,20 @@ class ViewMetrics:
         return "   |   ".join(parts)
 
 
+def attach_rate_limits(
+    metrics: Optional[ViewMetrics],
+    rate_limits: RateLimits,
+    scope: str,
+) -> Optional[ViewMetrics]:
+    """Attach account quotas, creating an empty metrics view when necessary."""
+    if not rate_limits.has_windows:
+        return metrics
+    target = metrics or ViewMetrics(scope=scope)
+    target.five_hour_limit = rate_limits.five_hour
+    target.weekly_limit = rate_limits.weekly
+    return target
+
+
 # -----------------------------
 # Rollout parser
 # -----------------------------

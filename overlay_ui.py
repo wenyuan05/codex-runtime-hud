@@ -165,6 +165,7 @@ def run_gui(args: Any) -> int:
         RolloutCandidate,
         SessionSelection,
         ViewMetrics,
+        attach_rate_limits,
         codex_home_default,
         fmt_num,
         fmt_time,
@@ -944,9 +945,8 @@ def run_gui(args: Any) -> int:
         parsed, path = cache.get("parsed"), cache.get("path")
         metrics = parsed.metrics(state["scope"]) if parsed is not None and path is not None else None
         global_limits = cache.get("rate_limits")
-        if metrics is not None and isinstance(global_limits, RateLimits) and global_limits.has_windows:
-            metrics.five_hour_limit = global_limits.five_hour
-            metrics.weekly_limit = global_limits.weekly
+        if isinstance(global_limits, RateLimits):
+            metrics = attach_rate_limits(metrics, global_limits, state["scope"])
         cache["metrics"] = metrics
         draw_ui()
 
