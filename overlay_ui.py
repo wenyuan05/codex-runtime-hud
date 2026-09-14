@@ -150,6 +150,7 @@ def run_gui(args: Any) -> int:
         return 2
 
     from codex_runtime_hud import (
+        APP_VERSION,
         IncrementalReaderPool,
         ParsedRollout,
         RateLimitWindow,
@@ -161,12 +162,14 @@ def run_gui(args: Any) -> int:
         fmt_num,
         fmt_time,
         load_settings,
+        prefer_rate_limits,
         resolve_language,
         save_settings,
         set_startup_enabled,
         startup_enabled,
         tr,
     )
+    from app_server_quota import CodexAppServerQuotaClient
     from icon_assets import create_icon_image
 
     codex_home = Path(args.codex_home).expanduser() if args.codex_home else codex_home_default()
@@ -191,6 +194,7 @@ def run_gui(args: Any) -> int:
         "compact_size": settings.get("compact_size", (220, 112)),
         "expanded_size": settings.get("expanded_size", (360, 244)),
         "toggle_hotkey": normalize_toggle_hotkey(settings.get("toggle_hotkey", DEFAULT_TOGGLE_HOTKEY)),
+        "high_accuracy_quotas": settings.get("high_accuracy_quotas") is True,
     }
     if state["scope"] not in {"turn", "session"}:
         state["scope"] = "turn"
@@ -252,6 +256,7 @@ def run_gui(args: Any) -> int:
     topmost_var = tk.BooleanVar(value=state["always_on_top"])
     language_var = tk.StringVar(value=language_mode)
     hotkey_var = tk.StringVar(value=state["toggle_hotkey"])
+    high_accuracy_quotas_var = tk.BooleanVar(value=state["high_accuracy_quotas"])
     try:
         root.attributes("-alpha", 0.98)
     except Exception:
@@ -269,6 +274,7 @@ def run_gui(args: Any) -> int:
     }
     readers = IncrementalReaderPool(max_readers=4)
     sessions = SessionSelection()
+    quota_client = CodexAppServerQuotaClient(client_version=APP_VERSION)
     scope_bounds = (0, 0, 0, 0)
     session_bounds = (0, 0, 0, 0)
     drag: dict[str, Any] = {"offset_x": 0, "offset_y": 0, "press_x": 0, "press_y": 0, "moved": False, "target": "body"}
@@ -520,6 +526,7 @@ def run_gui(args: Any) -> int:
                 "compact_size": list(state["compact_size"]),
                 "expanded_size": list(state["expanded_size"]),
                 "toggle_hotkey": state["toggle_hotkey"],
+                "high_accuracy_quotas": bool(state["high_accuracy_quotas"]),
             })
             save_settings(settings)
         except Exception:
@@ -654,6 +661,21 @@ def run_gui(args: Any) -> int:
             except Exception:
                 pass
 
+    def set_high_accuracy_quotas(enabled: bool) -> None:
+        state["high_accuracy_quotas"] = bool(enabled)
+        high_accuracy_quotas_var.set(state["high_accuracy_quotas"])
+        if state["high_accuracy_quotas"] and fixed_file is None:
+            quota_client.start()
+        else:
+            quota_client.stop()
+        persist_ui()
+        if tray_icon["icon"] is not None:
+            try:
+                refresh_tray_menu()
+            except Exception:
+                pass
+        root.after_idle(refresh_once)
+
     def refresh_tray_menu() -> None:
         """Replaced after pystray starts; keeps non-tray runs harmless."""
 
@@ -787,6 +809,7 @@ def run_gui(args: Any) -> int:
         persist_ui()
         tray_state["quit"] = True
         hotkey_manager.close()
+        quota_client.stop()
         if tray_icon["icon"] is not None:
             try:
                 tray_icon["icon"].stop()
@@ -816,6 +839,12 @@ def run_gui(args: Any) -> int:
         context_menu.add_separator()
         context_menu.add_checkbutton(label=tr(lang, "topmost"), variable=topmost_var, command=lambda: set_topmost(topmost_var.get()))
         context_menu.add_checkbutton(label=tr(lang, "startup"), command=lambda: set_startup_enabled(not startup_enabled()))
+        context_menu.add_checkbutton(
+            label=tr(lang, "quota_high_accuracy"),
+            variable=high_accuracy_quotas_var,
+            command=lambda: set_high_accuracy_quotas(high_accuracy_quotas_var.get()),
+            state="normal" if fixed_file is None else "disabled",
+        )
         hotkey_menu = tk.Menu(context_menu, tearoff=False)
         for shortcut, label, _modifiers, _key in TOGGLE_HOTKEY_CHOICES:
             hotkey_menu.add_radiobutton(
@@ -923,7 +952,13 @@ def run_gui(args: Any) -> int:
         else:
             resolution = sessions.resolve(codex_home, state["session_selection_mode"], state["selected_session_key"])
             candidate, candidates, path = resolution.candidate, resolution.candidates, resolution.candidate.path if resolution.candidate else None
-            cache["rate_limits"] = sessions.rate_limits
+            rollout_limits = sessions.rate_limits
+            if state["high_accuracy_quotas"]:
+                snapshot = quota_client.snapshot()
+                live_limits = RateLimits.from_app_server_result(snapshot.result)
+                cache["rate_limits"] = prefer_rate_limits(live_limits, rollout_limits)
+            else:
+                cache["rate_limits"] = rollout_limits
             if resolution.mode != state["session_selection_mode"] or resolution.selected_key != state["selected_session_key"]:
                 state["session_selection_mode"] = resolution.mode
                 state["selected_session_key"] = resolution.selected_key
@@ -1009,6 +1044,12 @@ def run_gui(args: Any) -> int:
                 pystray.MenuItem(lambda item: tr(lang, "language"), language_menu),
                 pystray.MenuItem(lambda item: tr(lang, "hotkey"), pystray.Menu(*hotkey_items)),
                 pystray.MenuItem(lambda item: tr(lang, "startup"), tray_action("startup"), checked=lambda item: startup_enabled()),
+                pystray.MenuItem(
+                    lambda item: tr(lang, "quota_high_accuracy"),
+                    tray_action("quota_high_accuracy"),
+                    checked=lambda item: state["high_accuracy_quotas"],
+                    enabled=lambda item: fixed_file is None,
+                ),
                 pystray.MenuItem(lambda item: tr(lang, "about"), tray_action("about")),
                 pystray.MenuItem(lambda item: tr(lang, "quit"), tray_action("quit")),
             )
@@ -1038,6 +1079,8 @@ def run_gui(args: Any) -> int:
                     toggle_visible()
                 elif action == "startup":
                     set_startup_enabled(not startup_enabled())
+                elif action == "quota_high_accuracy":
+                    set_high_accuracy_quotas(not state["high_accuracy_quotas"])
                 elif action == "session:auto":
                     set_session_auto()
                 elif action.startswith("session:"):
@@ -1049,7 +1092,8 @@ def run_gui(args: Any) -> int:
                 elif action == "about":
                     try:
                         from tkinter import messagebox
-                        messagebox.showinfo(tr(lang, "title"), f"{tr(lang, 'unofficial')}\n\n{tr(lang, 'local_only')}")
+                        privacy = tr(lang, "quota_high_accuracy_about") if state["high_accuracy_quotas"] and fixed_file is None else tr(lang, "local_only")
+                        messagebox.showinfo(tr(lang, "title"), f"{tr(lang, 'unofficial')}\n\n{privacy}")
                     except Exception:
                         pass
                 elif action == "quit":
@@ -1060,6 +1104,8 @@ def run_gui(args: Any) -> int:
             root.after(100, pump_tray)
 
     pump_tray()
+    if state["high_accuracy_quotas"] and fixed_file is None:
+        quota_client.start()
     # Let Tk map the window before scanning the session tree.  On machines
     # with many rollout files this keeps the first paint responsive; the
     # normal refresh loop still starts immediately after the event loop begins.

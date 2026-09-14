@@ -17,7 +17,8 @@ v0.3 UI:
 - Single click expands/collapses full metrics.
 - Scope button switches current turn vs session cumulative metrics.
 
-No network access, no API key, no modification of Codex state.
+No API key and no modification of Codex state. Network access remains disabled
+unless the user enables the optional Codex App Server quota source.
 """
 
 from __future__ import annotations
@@ -150,6 +151,8 @@ TRANSLATIONS = {
         "hotkey_disabled": "禁用",
         "hotkey_unavailable_title": "快捷键不可用",
         "hotkey_unavailable": "无法注册 {shortcut}，可能已被其他应用占用。",
+        "quota_high_accuracy": "高精度额度（由 Codex 联网）",
+        "quota_high_accuracy_about": "高精度额度已启用 · 由本机 Codex 联网 · HUD 不读取凭据",
         "reset_position": "重置位置",
         "local_only": "仅本地 · 只读 session · 不联网",
         "model_idle": "空闲",
@@ -201,6 +204,8 @@ TRANSLATIONS = {
         "hotkey_disabled": "Disabled",
         "hotkey_unavailable_title": "Shortcut unavailable",
         "hotkey_unavailable": "Could not register {shortcut}; another application may already be using it.",
+        "quota_high_accuracy": "High-accuracy quotas (Codex online)",
+        "quota_high_accuracy_about": "High-accuracy quotas enabled · Codex connects online · HUD does not read credentials",
         "reset_position": "Reset position",
         "local_only": "Local-only · Read-only session · No network",
         "model_idle": "Idle",
@@ -403,15 +408,18 @@ class RateLimitWindow:
 
     @classmethod
     def from_obj(cls, obj: Any) -> Optional["RateLimitWindow"]:
-        if not isinstance(obj, dict) or obj.get("used_percent") is None:
+        if not isinstance(obj, dict):
             return None
-        window_minutes = as_int(obj.get("window_minutes"))
+        used_percent = obj.get("used_percent", obj.get("usedPercent"))
+        if used_percent is None:
+            return None
+        window_minutes = as_int(obj.get("window_minutes", obj.get("windowDurationMins")))
         if window_minutes <= 0:
             return None
         return cls(
-            used_percent=max(0.0, min(100.0, as_num(obj.get("used_percent")))),
+            used_percent=max(0.0, min(100.0, as_num(used_percent))),
             window_minutes=window_minutes,
-            resets_at=parse_ts(obj.get("resets_at")),
+            resets_at=parse_ts(obj.get("resets_at", obj.get("resetsAt"))),
         )
 
     @property
@@ -433,7 +441,7 @@ class RateLimits:
         """Parse the standard Codex allowance without mixing limit families."""
         if not isinstance(obj, dict):
             return None
-        limit_id = str(obj.get("limit_id") or "").strip().lower()
+        limit_id = str(obj.get("limit_id", obj.get("limitId")) or "").strip().lower()
         # Older rollout records did not include limit_id. Keep accepting those,
         # but do not let gpt-reserve/base_model_inference or premium snapshots
         # replace the standard 5h + weekly Codex allowance.
@@ -458,6 +466,29 @@ class RateLimits:
             elif 9_000 <= window.window_minutes <= 11_000:
                 weekly = window
         return cls(five_hour=five_hour, weekly=weekly)
+
+    @classmethod
+    def from_app_server_result(cls, result: Any) -> "RateLimits":
+        """Parse the standard account bucket returned by Codex App Server."""
+        if not isinstance(result, dict):
+            return cls()
+        by_limit_id = result.get("rateLimitsByLimitId")
+        if isinstance(by_limit_id, dict):
+            for key, value in by_limit_id.items():
+                if str(key).strip().lower() == "codex":
+                    parsed = cls.from_codex_obj(value)
+                    if parsed is not None and parsed.has_windows:
+                        return parsed
+        parsed = cls.from_codex_obj(result.get("rateLimits"))
+        return parsed if parsed is not None else cls()
+
+
+def prefer_rate_limits(preferred: RateLimits, fallback: RateLimits) -> RateLimits:
+    """Prefer each live account window independently, preserving fallback gaps."""
+    return RateLimits(
+        five_hour=preferred.five_hour or fallback.five_hour,
+        weekly=preferred.weekly or fallback.weekly,
+    )
 
 
 @dataclass

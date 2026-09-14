@@ -4,7 +4,7 @@ import unittest
 import os
 from pathlib import Path
 
-from codex_runtime_hud import IncrementalReaderPool, IncrementalRolloutReader, RolloutCandidate, RootThreadSelector, SessionSelection, parse_rollout, resolve_language
+from codex_runtime_hud import IncrementalReaderPool, IncrementalRolloutReader, RateLimits, RolloutCandidate, RootThreadSelector, SessionSelection, parse_rollout, prefer_rate_limits, resolve_language
 
 ROWS = [{'timestamp': '2026-08-14T00:00:00Z', 'type': 'event_msg', 'payload': {'type': 'task_started', 'turn_id': 't1', 'started_at': 1786665600, 'model_context_window': 200000}}, {'timestamp': '2026-08-14T00:00:00.1Z', 'type': 'event_msg', 'payload': {'type': 'thread_settings_applied', 'thread_settings': {'model': 'gpt-5.6-luna'}}}, {'timestamp': '2026-08-14T00:00:03Z', 'type': 'event_msg', 'payload': {'type': 'raw_response_completed', 'response_id': 'r1', 'token_usage': {'input_tokens': 100000, 'cached_input_tokens': 95000, 'cache_write_input_tokens': 0, 'output_tokens': 5000, 'reasoning_output_tokens': 1000, 'total_tokens': 106000}}}, {'timestamp': '2026-08-14T00:00:10Z', 'type': 'event_msg', 'payload': {'type': 'token_count', 'info': {'total_token_usage': {'input_tokens': 100000, 'cached_input_tokens': 95000, 'cache_write_input_tokens': 0, 'output_tokens': 5000, 'reasoning_output_tokens': 1000, 'total_tokens': 106000}, 'last_token_usage': {'input_tokens': 100000, 'cached_input_tokens': 95000, 'cache_write_input_tokens': 0, 'output_tokens': 5000, 'reasoning_output_tokens': 1000, 'total_tokens': 106000}, 'model_context_window': 200000}, 'rate_limits': None}}, {'timestamp': '2026-08-14T00:00:10Z', 'type': 'event_msg', 'payload': {'type': 'task_complete', 'turn_id': 't1', 'started_at': 1786665600, 'completed_at': 1786665610, 'duration_ms': 10000, 'time_to_first_token_ms': 900, 'last_agent_message': 'done'}}, {'timestamp': '2026-08-14T00:01:00Z', 'type': 'event_msg', 'payload': {'type': 'task_started', 'turn_id': 't2', 'started_at': 1786665660, 'model_context_window': 200000}}, {'timestamp': '2026-08-14T00:01:02Z', 'type': 'event_msg', 'payload': {'type': 'exec_command_begin', 'call_id': 'c1', 'turn_id': 't2', 'started_at_ms': 1786665662000, 'command': ['git', 'status'], 'cwd': '.'}}, {'timestamp': '2026-08-14T00:01:03Z', 'type': 'event_msg', 'payload': {'type': 'mcp_tool_call_begin', 'call_id': 'c2', 'turn_id': 't2', 'invocation': {'server': 'x', 'tool': 'read', 'arguments': {}}}}, {'timestamp': '2026-08-14T00:01:05Z', 'type': 'event_msg', 'payload': {'type': 'exec_command_end', 'call_id': 'c1', 'turn_id': 't2', 'completed_at_ms': 1786665665000, 'command': ['git', 'status'], 'cwd': '.'}}, {'timestamp': '2026-08-14T00:01:07Z', 'type': 'event_msg', 'payload': {'type': 'mcp_tool_call_end', 'call_id': 'c2', 'turn_id': 't2', 'duration': '4s', 'result': {'Ok': {}}}}, {'timestamp': '2026-08-14T00:01:15Z', 'type': 'event_msg', 'payload': {'type': 'raw_response_completed', 'response_id': 'r2', 'token_usage': {'input_tokens': 20000, 'cached_input_tokens': 18000, 'cache_write_input_tokens': 0, 'output_tokens': 2000, 'reasoning_output_tokens': 300, 'total_tokens': 22300}}}, {'timestamp': '2026-08-14T00:01:20Z', 'type': 'event_msg', 'payload': {'type': 'token_count', 'info': {'total_token_usage': {'input_tokens': 120000, 'cached_input_tokens': 113000, 'cache_write_input_tokens': 0, 'output_tokens': 7000, 'reasoning_output_tokens': 1300, 'total_tokens': 128300}, 'last_token_usage': {'input_tokens': 20000, 'cached_input_tokens': 18000, 'cache_write_input_tokens': 0, 'output_tokens': 2000, 'reasoning_output_tokens': 300, 'total_tokens': 22300}, 'model_context_window': 200000}, 'rate_limits': None}}, {'timestamp': '2026-08-14T00:01:20Z', 'type': 'event_msg', 'payload': {'type': 'task_complete', 'turn_id': 't2', 'started_at': 1786665660, 'completed_at': 1786665680, 'duration_ms': 20000, 'time_to_first_token_ms': 800, 'last_agent_message': 'done'}}]
 
@@ -200,6 +200,43 @@ class HudTests(unittest.TestCase):
             selection.resolve(home, "manual", selected_candidate.key)
             self.assertEqual(selection.rate_limits.five_hour.remaining_percent, 39.0)
             self.assertEqual(selection.rate_limits.weekly.remaining_percent, 74.0)
+
+    def test_app_server_rate_limits_prefer_standard_multi_bucket_view(self):
+        limits = RateLimits.from_app_server_result({
+            "rateLimits": {
+                "limitId": "base_model_inference",
+                "primary": {"usedPercent": 13, "windowDurationMins": 10080, "resetsAt": 1789194173},
+            },
+            "rateLimitsByLimitId": {
+                "base_model_inference": {
+                    "limitId": "base_model_inference",
+                    "primary": {"usedPercent": 13, "windowDurationMins": 10080, "resetsAt": 1789194173},
+                },
+                "codex": {
+                    "limitId": "codex",
+                    "primary": {"usedPercent": 97, "windowDurationMins": 300, "resetsAt": 1788836552},
+                    "secondary": {"usedPercent": 31, "windowDurationMins": 10080, "resetsAt": 1789395043},
+                },
+            },
+        })
+        self.assertEqual(limits.five_hour.remaining_percent, 3.0)
+        self.assertEqual(limits.weekly.remaining_percent, 69.0)
+
+    def test_app_server_compatibility_view_and_per_window_fallback(self):
+        live = RateLimits.from_app_server_result({
+            "rateLimits": {
+                "limitId": "codex",
+                "primary": {"usedPercent": 98, "windowDurationMins": 300, "resetsAt": 1788836552},
+                "secondary": None,
+            }
+        })
+        rollout = RateLimits.from_obj({
+            "primary": {"used_percent": 70, "window_minutes": 300, "resets_at": 1788836000},
+            "secondary": {"used_percent": 32, "window_minutes": 10080, "resets_at": 1789395000},
+        })
+        combined = prefer_rate_limits(live, rollout)
+        self.assertEqual(combined.five_hour.remaining_percent, 2.0)
+        self.assertEqual(combined.weekly.remaining_percent, 68.0)
 
     def test_latest_turn_scope_and_task_aliases(self):
         with tempfile.TemporaryDirectory() as td:

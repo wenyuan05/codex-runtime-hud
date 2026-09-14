@@ -6,9 +6,9 @@
 
 > **Unofficial / Not affiliated with OpenAI.**
 
-A Windows always-on-top HUD focused on real-time, single-turn performance for Codex Desktop / Codex CLI. It follows the active root user rollout as JSONL is appended and never calls an API.
+A Windows always-on-top HUD focused on real-time, single-turn performance for Codex Desktop / Codex CLI. By default it follows local root-user rollout JSONL only; an opt-in high-accuracy quota mode can ask the installed Codex CLI for current account limits.
 
-Next release: **v0.4.5**. Standard Codex 5h and weekly quotas now follow the newest account-wide local snapshot instead of the selected task, and other limit families such as `gpt-reserve` can no longer replace them.
+Next release: **v0.4.5**. Standard Codex 5h and weekly quotas now follow the newest account-wide local snapshot instead of the selected task, and other limit families such as `gpt-reserve` can no longer replace them. An optional higher-accuracy source reads the current `codex` bucket through the local Codex App Server and automatically falls back to rollout aggregation.
 
 ## What it monitors
 
@@ -18,12 +18,13 @@ The default view is the current turn, not a historical dashboard. While a turn i
 
 - Read-only access to local Codex session files under `~/.codex/sessions` and `~/.codex/archived_sessions`.
 - Does **not** read `auth.json`, API keys, `.env` files, prompts outside the rollout file, or credentials.
-- The application makes no network connections. GitHub, Python and PyInstaller are only used for distribution/building.
+- Default mode makes no network connections. GitHub, Python and PyInstaller are only used for distribution/building.
+- **High-accuracy quotas (opt-in):** the HUD starts the installed [Codex App Server](https://developers.openai.com/codex/app-server) as a local child process and requests `account/rateLimits/read` every 10 seconds. Codex performs the authenticated account request; the HUD does not read, receive or store its credentials. Turning the option off stops that owned child process.
 - Settings contain only window coordinates and UI preferences, including the selected global shortcut: `%LOCALAPPDATA%\CodexRuntimeHUD\settings.json`.
-  UI preferences include `expanded`, `scope`, `language` (`auto`, `en`, `zh-CN`), `always_on_top` and local session-selection mode. The session picker always closes when clicking outside it. `Auto` follows the Windows UI language; an explicit English/Chinese choice is remembered until changed back to `Auto`.
+  UI preferences include `expanded`, `scope`, `language` (`auto`, `en`, `zh-CN`), `always_on_top`, `toggle_hotkey`, `high_accuracy_quotas` and local session-selection mode. The session picker always closes when clicking outside it. `Auto` follows the Windows UI language; an explicit English/Chinese choice is remembered until changed back to `Auto`.
 - Existing settings from `%LOCALAPPDATA%\CodexTokenOverlay\settings.json` are read as a one-way compatibility fallback; new saves use the `CodexRuntimeHUD` folder.
 
-Quota percentages are account-wide. The HUD combines the newest standard `limit_id=codex` 5h and weekly observations across eligible local root rollouts, so manually selecting another task does not freeze or replace them. Other limit families are intentionally ignored.
+Quota percentages are account-wide. In compatible default mode, the HUD combines the newest standard `limit_id=codex` 5h and weekly observations across eligible local root rollouts, so manually selecting another task does not freeze or replace them. Other limit families are intentionally ignored. When high-accuracy quotas are enabled, the live `rateLimitsByLimitId.codex` windows take precedence independently; if Codex is unavailable, signed out, or a live window is missing, the corresponding rollout value remains visible as the fallback.
 
 ### Session status limitations
 
@@ -39,7 +40,7 @@ Verify the download with `SHA256SUMS.txt`:
 Get-FileHash .\CodexRuntimeHUD.exe -Algorithm SHA256
 ```
 
-Double-click the EXE. The compact HUD shows a Sessions button, scope, Cache, In and Out; click the body to expand the detailed panel. The expanded view also shows remaining 5h and Weekly allowance plus reset countdowns from the latest `rate_limits` snapshot in the rollout. A missing quota window is shown as `—`; the application does not make a network request to fill it. Click Sessions to open a scrollable local root-session list. `Follow automatically` keeps the stable latest-root behavior; selecting a session locks the HUD to that session until you select Auto again. Session rows use only the local `cwd` project folder plus a short thread ID, never prompt text. The picker always closes when clicking outside it. Click Current/Session to switch scope without expanding. Drag from the background to move it; drag the diagonal handle in the lower-right corner to resize it. Compact and expanded mode sizes are remembered separately. A right-click opens the native menu for Hide window, scope, sessions, Always on top, startup, the global Show/Hide shortcut, language, reset position, copy and Quit. The tray icon provides the same shortcut setting alongside Sessions, Show/Hide, Start with Windows, Language, About and Quit. Choose `Ctrl+Alt+H` (default), `Ctrl+Shift+H`, `Alt+Shift+H`, or Disabled. If another application already owns a shortcut, the HUD keeps the previous setting and reports the conflict. Startup is opt-in and uses the current user's registry only. Position and UI preferences persist across launches.
+Double-click the EXE. The compact HUD shows a Sessions button, scope, Cache, In and Out; click the body to expand the detailed panel. The expanded view also shows remaining 5h and Weekly allowance plus reset countdowns. A missing quota window is shown as `—`. Click Sessions to open a scrollable local root-session list. `Follow automatically` keeps the stable latest-root behavior; selecting a session locks the HUD to that session until you select Auto again. Session rows use only the local `cwd` project folder plus a short thread ID, never prompt text. The picker always closes when clicking outside it. Click Current/Session to switch scope without expanding. Drag from the background to move it; drag the diagonal handle in the lower-right corner to resize it. Compact and expanded mode sizes are remembered separately. A right-click opens the native menu for Hide window, scope, sessions, Always on top, startup, **High-accuracy quotas (Codex online)**, the global Show/Hide shortcut, language, reset position, copy and Quit. The tray icon provides the same quota and shortcut settings alongside Sessions, Show/Hide, Start with Windows, Language, About and Quit. High-accuracy quotas are disabled by default and require an installed, signed-in Codex CLI. Choose `Ctrl+Alt+H` (default), `Ctrl+Shift+H`, `Alt+Shift+H`, or Disabled. If another application already owns a shortcut, the HUD keeps the previous setting and reports the conflict. Startup is opt-in and uses the current user's registry only. Position and UI preferences persist across launches.
 
 ## Run from source
 
@@ -73,6 +74,7 @@ The result is `dist\CodexRuntimeHUD.exe` plus `dist\SHA256SUMS.txt`. The same ch
 - Click Turn/Session: switch current-turn or cumulative-session metrics.
 - Middle-click/Ctrl+C: copy visible text. Right-click opens the native settings menu; Escape hides to the tray.
 - `Ctrl+Alt+H`: show or hide the HUD globally; change or disable it from Show/Hide shortcut in the context or tray menu.
+- High-accuracy quotas: disabled by default; enable from the context or tray menu to refresh the account-level standard Codex bucket through the installed Codex CLI, with automatic rollout fallback.
 - 5h/Weekly windows are identified by `window_minutes`, not by `primary`/`secondary` order; both percentage and bar represent the remaining allowance.
 - Cache hit is `cached_input_tokens / input_tokens`.
 - Current-turn usage prefers exact `raw_response_completed` usage and otherwise uses cumulative deltas. A non-zero cumulative counter regression starts a new accounting epoch so resumed rollouts remain countable across restarts.
@@ -89,7 +91,7 @@ MIT. See [LICENSE](LICENSE).
 
 ## Repository layout
 
-- `codex_runtime_hud.py`, `overlay_ui.py`, `icon_assets.py`: application source.
+- `codex_runtime_hud.py`, `overlay_ui.py`, `app_server_quota.py`, `icon_assets.py`: application source.
 - `tests/`: parser, icon and UI-settings unit tests.
 - `scripts/`: build, launcher and demo-capture scripts.
 - `packaging/`: PyInstaller spec and Windows version metadata.

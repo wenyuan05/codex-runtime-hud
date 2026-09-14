@@ -6,9 +6,9 @@
 
 > **Unofficial / Not affiliated with OpenAI（非官方，与 OpenAI 无隶属关系）。**
 
-这是一个专注于 Codex Desktop / Codex CLI **单轮实时表现**的 Windows 悬浮窗。它会跟随 root user rollout 的 JSONL 增量写入实时刷新，不调用任何 API。
+这是一个专注于 Codex Desktop / Codex CLI **单轮实时表现**的 Windows 悬浮窗。默认只跟随本地 root user rollout 的 JSONL 增量写入；也可以主动启用高精度额度模式，让本机已安装的 Codex CLI 查询当前账户额度。
 
-下一版本：**v0.4.5**。标准 Codex 5h 与周额度改为跟随所有本地任务中最新的账户级快照，不再绑定当前选中的任务；`gpt-reserve` 等其他额度类型也不会再覆盖它们。
+下一版本：**v0.4.5**。标准 Codex 5h 与周额度改为跟随所有本地任务中最新的账户级快照，不再绑定当前选中的任务；`gpt-reserve` 等其他额度类型也不会再覆盖它们。新增可选的高精度数据源，通过本机 Codex App Server 读取实时 `codex` 额度桶，异常时自动回退到 rollout 聚合。
 
 ## 监控重点
 
@@ -18,12 +18,13 @@
 
 - 只读 `~/.codex/sessions` 与 `~/.codex/archived_sessions` 下的本地 Codex session 文件。
 - **不会**读取 `auth.json`、API Key、`.env`、rollout 之外的提示词或凭据。
-- 应用运行时不联网；GitHub、Python、PyInstaller 只用于分发和构建。
+- 默认模式运行时不联网；GitHub、Python、PyInstaller 只用于分发和构建。
+- **高精度额度（主动启用）：**HUD 会把已安装的 [Codex App Server](https://developers.openai.com/codex/app-server) 作为本地子进程启动，每 10 秒请求一次 `account/rateLimits/read`。由 Codex 完成已登录账户的联网查询；HUD 不读取、不接收、也不保存其凭据。关闭选项后会停止这个由 HUD 启动的子进程。
 - 设置文件只保存窗口坐标和 UI 偏好：`%LOCALAPPDATA%\CodexRuntimeHUD\settings.json`。
-  UI 偏好包括 `expanded`、`scope`、`language`（`auto`、`en`、`zh-CN`）、`always_on_top`、`toggle_hotkey` 和本地会话选择模式。会话列表固定在点击列表外时自动关闭。`Auto` 跟随 Windows UI 语言；手动选择中英文后会记住该选择，改回 `Auto` 才恢复自动检测。
+  UI 偏好包括 `expanded`、`scope`、`language`（`auto`、`en`、`zh-CN`）、`always_on_top`、`toggle_hotkey`、`high_accuracy_quotas` 和本地会话选择模式。会话列表固定在点击列表外时自动关闭。`Auto` 跟随 Windows UI 语言；手动选择中英文后会记住该选择，改回 `Auto` 才恢复自动检测。
 - 现有 `%LOCALAPPDATA%\CodexTokenOverlay\settings.json` 会作为一次性兼容回退读取；之后的新设置写入 `CodexRuntimeHUD` 文件夹。
 
-额度百分比属于账户级数据。HUD 会在所有符合条件的本地 root rollout 中分别合并最新的标准 `limit_id=codex` 5h 与周额度，因此手动选择其他任务也不会令额度停止刷新或被替换；其他额度类型会被有意忽略。
+额度百分比属于账户级数据。在兼容的默认模式中，HUD 会在所有符合条件的本地 root rollout 中分别合并最新的标准 `limit_id=codex` 5h 与周额度，因此手动选择其他任务也不会令额度停止刷新或被替换；其他额度类型会被有意忽略。启用高精度额度后，实时的 `rateLimitsByLimitId.codex` 会按窗口分别优先显示；如果 Codex 不可用、未登录，或实时响应缺少某个窗口，对应位置仍显示 rollout 回退值。
 
 ### 会话状态的局限
 
@@ -39,7 +40,7 @@
 Get-FileHash .\CodexRuntimeHUD.exe -Algorithm SHA256
 ```
 
-双击 EXE 即可运行。折叠 HUD 顶部提供“会话”按钮、范围、Cache、In、Out；点击主体展开详细面板。展开视图还会显示 rollout 最近一次 `rate_limits` 快照中的 `5h` 与周额度剩余比例和重置倒计时；本地 rollout 未提供某个窗口时显示 `—`，应用不会为此联网查询。点击“会话”会显示可滚动的本地 root 会话列表。“自动跟随”保留稳定的最新 root 会话策略；手动选择某个会话后，HUD 会锁定它，直到重新选择自动跟随。列表只使用本地 `cwd` 项目目录名和短 thread ID，不读取提示词正文。会话列表固定在点击列表外时自动关闭。点击“本轮/累计”只切换范围，不会展开。拖动背景区域移动窗口；拖动右下角斜线手柄可调节窗口大小，紧凑和展开模式分别记忆尺寸。右键打开原生菜单，可隐藏窗口，或切换范围、会话、始终置顶、开机启动、全局显示/隐藏快捷键、语言、重置位置、复制和退出。托盘菜单也提供相同的快捷键设置，以及会话、显示/隐藏、开机启动、语言（自动/English/简体中文）、关于和退出。快捷键可选 `Ctrl+Alt+H`（默认）、`Ctrl+Shift+H`、`Alt+Shift+H` 或禁用；如果组合键已被其他程序占用，应用会保留原设置并提示。开机启动默认关闭，启用后只写入当前用户注册表；位置和 UI 偏好会跨重启保留。
+双击 EXE 即可运行。折叠 HUD 顶部提供“会话”按钮、范围、Cache、In、Out；点击主体展开详细面板。展开视图还会显示 `5h` 与周额度剩余比例和重置倒计时；缺少某个窗口时显示 `—`。点击“会话”会显示可滚动的本地 root 会话列表。“自动跟随”保留稳定的最新 root 会话策略；手动选择某个会话后，HUD 会锁定它，直到重新选择自动跟随。列表只使用本地 `cwd` 项目目录名和短 thread ID，不读取提示词正文。会话列表固定在点击列表外时自动关闭。点击“本轮/累计”只切换范围，不会展开。拖动背景区域移动窗口；拖动右下角斜线手柄可调节窗口大小，紧凑和展开模式分别记忆尺寸。右键打开原生菜单，可隐藏窗口，或切换范围、会话、始终置顶、开机启动、**高精度额度（由 Codex 联网）**、全局显示/隐藏快捷键、语言、重置位置、复制和退出。托盘菜单也提供相同的额度与快捷键设置，以及会话、显示/隐藏、开机启动、语言（自动/English/简体中文）、关于和退出。高精度额度默认关闭，需要本机已安装并登录 Codex CLI。快捷键可选 `Ctrl+Alt+H`（默认）、`Ctrl+Shift+H`、`Alt+Shift+H` 或禁用；如果组合键已被其他程序占用，应用会保留原设置并提示。开机启动默认关闭，启用后只写入当前用户注册表；位置和 UI 偏好会跨重启保留。
 
 ## 源码运行
 
@@ -73,6 +74,7 @@ Set-ExecutionPolicy -Scope Process Bypass
 - 点击“本轮/累计”：切换当前轮或当前 session 累计统计。
 - 中键/Ctrl+C：复制当前信息；右键：打开原生设置菜单；Escape：隐藏到托盘。
 - `Ctrl+Alt+H`：在任意应用中显示/隐藏悬浮窗；可在右键或托盘菜单的“显示/隐藏快捷键”中更换或禁用。
+- 高精度额度：默认关闭；可在右键或托盘菜单中启用，通过已安装的 Codex CLI 刷新账户级标准 Codex 额度，并在失败时自动使用 rollout 回退值。
 - `5h`/周额度按 `window_minutes` 识别，不依赖 `primary`/`secondary` 顺序；进度条和百分比都表示剩余额度。
 - 缓存命中率 = `cached_input_tokens / input_tokens`。
 - 本轮优先使用精确的 `raw_response_completed` usage，否则使用累计值差分；同一 rollout 内累计计数非零回退时会自动开启新的计数周期，跨重启继续统计。
@@ -89,7 +91,7 @@ MIT，详见 [LICENSE](LICENSE)。
 
 ## 仓库目录
 
-- `codex_runtime_hud.py`、`overlay_ui.py`、`icon_assets.py`：应用源码。
+- `codex_runtime_hud.py`、`overlay_ui.py`、`app_server_quota.py`、`icon_assets.py`：应用源码。
 - `tests/`：解析器、图标和 UI 设置单元测试。
 - `scripts/`：构建、启动和 GIF 采集脚本。
 - `packaging/`：PyInstaller spec 和 Windows 版本元数据。

@@ -13,13 +13,15 @@ class UiConfigTests(unittest.TestCase):
             path = Path(temp) / "settings.json"
             with patch("codex_runtime_hud.settings_path", return_value=path):
                 save_settings({"x": 100, "y": 80, "expanded": True, "scope": "session", "language": "en", "always_on_top": False,
-                               "session_selection_mode": "manual", "selected_session_key": "thread:test", "toggle_hotkey": "ctrl+shift+h"})
+                               "session_selection_mode": "manual", "selected_session_key": "thread:test", "toggle_hotkey": "ctrl+shift+h",
+                               "high_accuracy_quotas": True})
                 self.assertEqual(load_settings()["scope"], "session")
                 self.assertTrue(load_settings()["expanded"])
                 self.assertFalse(load_settings()["always_on_top"])
                 self.assertEqual(load_settings()["session_selection_mode"], "manual")
                 self.assertEqual(load_settings()["selected_session_key"], "thread:test")
                 self.assertEqual(load_settings()["toggle_hotkey"], "ctrl+shift+h")
+                self.assertTrue(load_settings()["high_accuracy_quotas"])
 
     def test_toggle_hotkey_normalization(self):
         self.assertEqual(normalize_toggle_hotkey(" CTRL+ALT+H "), "ctrl+alt+h")
