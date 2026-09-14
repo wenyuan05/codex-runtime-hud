@@ -761,6 +761,7 @@ class RolloutParser:
         self.latest_total_usage = Usage()
         self.raw_total_usage = Usage()
         self.raw_total_usage_seen = False
+        self.exact_usage_since_total = Usage()
         self.usage_reset_events = 0
         self.current_context_tokens: Optional[int] = None
         self.rate_limits = RateLimits()
@@ -913,6 +914,10 @@ class RolloutParser:
                 self.usage_reset_events += 1
             self.raw_total_usage = total
             self.latest_total_usage = self.current_total_usage
+            # A cumulative snapshot accounts for all exact responses observed
+            # before it. Only later responses need supplementing in the
+            # session view while the next snapshot is pending.
+            self.exact_usage_since_total = Usage()
 
         last = Usage.from_obj(info.get("last_token_usage"))
         self.token_usage_events += 1
@@ -945,6 +950,7 @@ class RolloutParser:
             turn.exact_response_ids.add(response_id)
             turn.exact_response_usage = turn.exact_response_usage + usage
             turn.exact_response_count += 1
+            self.exact_usage_since_total = self.exact_usage_since_total + usage
 
     @classmethod
     def canonical_kind(cls, value: Any) -> Optional[str]:
@@ -1159,7 +1165,7 @@ class RolloutParser:
             cover_den += len(spans)
             exact_count += turn.exact_response_count
 
-        usage = self.latest_total_usage
+        usage = self.latest_total_usage + self.exact_usage_since_total
         avg_ttft = sum(ttfts) / len(ttfts) if ttfts else None
         tps = usage.output_tokens / total_llm if usage.output_tokens > 0 and total_llm > 0.05 else None
         coverage = cover_num / cover_den if cover_den else 1.0

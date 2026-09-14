@@ -4,7 +4,7 @@ import unittest
 import os
 from pathlib import Path
 
-from codex_runtime_hud import IncrementalReaderPool, IncrementalRolloutReader, RateLimits, RolloutCandidate, RootThreadSelector, SessionSelection, parse_rollout, prefer_rate_limits, resolve_language
+from codex_runtime_hud import IncrementalReaderPool, IncrementalRolloutReader, RateLimits, RolloutCandidate, RolloutParser, RootThreadSelector, SessionSelection, parse_rollout, prefer_rate_limits, resolve_language
 
 ROWS = [{'timestamp': '2026-08-14T00:00:00Z', 'type': 'event_msg', 'payload': {'type': 'task_started', 'turn_id': 't1', 'started_at': 1786665600, 'model_context_window': 200000}}, {'timestamp': '2026-08-14T00:00:00.1Z', 'type': 'event_msg', 'payload': {'type': 'thread_settings_applied', 'thread_settings': {'model': 'gpt-5.6-luna'}}}, {'timestamp': '2026-08-14T00:00:03Z', 'type': 'event_msg', 'payload': {'type': 'raw_response_completed', 'response_id': 'r1', 'token_usage': {'input_tokens': 100000, 'cached_input_tokens': 95000, 'cache_write_input_tokens': 0, 'output_tokens': 5000, 'reasoning_output_tokens': 1000, 'total_tokens': 106000}}}, {'timestamp': '2026-08-14T00:00:10Z', 'type': 'event_msg', 'payload': {'type': 'token_count', 'info': {'total_token_usage': {'input_tokens': 100000, 'cached_input_tokens': 95000, 'cache_write_input_tokens': 0, 'output_tokens': 5000, 'reasoning_output_tokens': 1000, 'total_tokens': 106000}, 'last_token_usage': {'input_tokens': 100000, 'cached_input_tokens': 95000, 'cache_write_input_tokens': 0, 'output_tokens': 5000, 'reasoning_output_tokens': 1000, 'total_tokens': 106000}, 'model_context_window': 200000}, 'rate_limits': None}}, {'timestamp': '2026-08-14T00:00:10Z', 'type': 'event_msg', 'payload': {'type': 'task_complete', 'turn_id': 't1', 'started_at': 1786665600, 'completed_at': 1786665610, 'duration_ms': 10000, 'time_to_first_token_ms': 900, 'last_agent_message': 'done'}}, {'timestamp': '2026-08-14T00:01:00Z', 'type': 'event_msg', 'payload': {'type': 'task_started', 'turn_id': 't2', 'started_at': 1786665660, 'model_context_window': 200000}}, {'timestamp': '2026-08-14T00:01:02Z', 'type': 'event_msg', 'payload': {'type': 'exec_command_begin', 'call_id': 'c1', 'turn_id': 't2', 'started_at_ms': 1786665662000, 'command': ['git', 'status'], 'cwd': '.'}}, {'timestamp': '2026-08-14T00:01:03Z', 'type': 'event_msg', 'payload': {'type': 'mcp_tool_call_begin', 'call_id': 'c2', 'turn_id': 't2', 'invocation': {'server': 'x', 'tool': 'read', 'arguments': {}}}}, {'timestamp': '2026-08-14T00:01:05Z', 'type': 'event_msg', 'payload': {'type': 'exec_command_end', 'call_id': 'c1', 'turn_id': 't2', 'completed_at_ms': 1786665665000, 'command': ['git', 'status'], 'cwd': '.'}}, {'timestamp': '2026-08-14T00:01:07Z', 'type': 'event_msg', 'payload': {'type': 'mcp_tool_call_end', 'call_id': 'c2', 'turn_id': 't2', 'duration': '4s', 'result': {'Ok': {}}}}, {'timestamp': '2026-08-14T00:01:15Z', 'type': 'event_msg', 'payload': {'type': 'raw_response_completed', 'response_id': 'r2', 'token_usage': {'input_tokens': 20000, 'cached_input_tokens': 18000, 'cache_write_input_tokens': 0, 'output_tokens': 2000, 'reasoning_output_tokens': 300, 'total_tokens': 22300}}}, {'timestamp': '2026-08-14T00:01:20Z', 'type': 'event_msg', 'payload': {'type': 'token_count', 'info': {'total_token_usage': {'input_tokens': 120000, 'cached_input_tokens': 113000, 'cache_write_input_tokens': 0, 'output_tokens': 7000, 'reasoning_output_tokens': 1300, 'total_tokens': 128300}, 'last_token_usage': {'input_tokens': 20000, 'cached_input_tokens': 18000, 'cache_write_input_tokens': 0, 'output_tokens': 2000, 'reasoning_output_tokens': 300, 'total_tokens': 22300}, 'model_context_window': 200000}, 'rate_limits': None}}, {'timestamp': '2026-08-14T00:01:20Z', 'type': 'event_msg', 'payload': {'type': 'task_complete', 'turn_id': 't2', 'started_at': 1786665660, 'completed_at': 1786665680, 'duration_ms': 20000, 'time_to_first_token_ms': 800, 'last_agent_message': 'done'}}]
 
@@ -411,6 +411,30 @@ class HudTests(unittest.TestCase):
             p.write_text(json.dumps(rows[0]), encoding="utf-8")
             pending = parse_rollout(p).metrics("turn")
             self.assertTrue(pending.usage_pending)
+
+    def test_session_usage_uses_exact_responses_until_cumulative_snapshot_arrives(self):
+        parser = RolloutParser()
+        parser.feed({"timestamp": 1000, "type": "event_msg", "payload": {
+            "type": "task_started", "turn_id": "raw-only", "started_at": 1000,
+        }})
+        parser.feed({"timestamp": 1001, "type": "event_msg", "payload": {
+            "type": "raw_response_completed", "response_id": "response-1",
+            "token_usage": {"input_tokens": 100, "output_tokens": 20, "total_tokens": 120},
+        }})
+
+        before_snapshot = parser.session_metrics(active_file=False)
+        self.assertEqual(before_snapshot.usage.total_tokens, 120)
+        self.assertFalse(before_snapshot.usage_pending)
+
+        parser.feed({"timestamp": 1002, "type": "event_msg", "payload": {
+            "type": "token_count",
+            "info": {
+                "total_token_usage": {"input_tokens": 100, "output_tokens": 20, "total_tokens": 120},
+                "last_token_usage": {"input_tokens": 100, "output_tokens": 20, "total_tokens": 120},
+            },
+        }})
+        after_snapshot = parser.session_metrics(active_file=False)
+        self.assertEqual(after_snapshot.usage.total_tokens, 120)
 
     def test_selector_excludes_subagent_and_follows_new_root_task(self):
         with tempfile.TemporaryDirectory() as td:
