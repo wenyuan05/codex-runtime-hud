@@ -847,7 +847,7 @@ class RolloutParser:
         for v in candidates:
             if isinstance(v, str) and v.strip():
                 self.model = v.strip()
-                if self.active_turn and not self.active_turn.model:
+                if self.active_turn:
                     self.active_turn.model = self.model
 
     def start_turn(self, payload: dict[str, Any], ts: Optional[float]) -> None:

@@ -436,6 +436,24 @@ class HudTests(unittest.TestCase):
         after_snapshot = parser.session_metrics(active_file=False)
         self.assertEqual(after_snapshot.usage.total_tokens, 120)
 
+    def test_active_turn_follows_model_setting_changes(self):
+        parser = RolloutParser()
+        parser.feed({"timestamp": 1000, "type": "event_msg", "payload": {
+            "type": "thread_settings_applied", "thread_settings": {"model": "model-a"},
+        }})
+        parser.feed({"timestamp": 1001, "type": "event_msg", "payload": {
+            "type": "task_started", "turn_id": "rerouted", "started_at": 1001,
+        }})
+        parser.feed({"timestamp": 1002, "type": "event_msg", "payload": {
+            "type": "thread_settings_applied", "thread_settings": {"model": "model-b"},
+        }})
+        self.assertEqual(parser.turn_metrics(active_file=False).model, "model-b")
+
+        parser.feed({"timestamp": 1003, "type": "event_msg", "payload": {
+            "type": "model_reroute", "to_model": "model-c",
+        }})
+        self.assertEqual(parser.turn_metrics(active_file=False).model, "model-c")
+
     def test_selector_excludes_subagent_and_follows_new_root_task(self):
         with tempfile.TemporaryDirectory() as td:
             home = Path(td)
