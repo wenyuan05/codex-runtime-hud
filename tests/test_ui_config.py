@@ -4,7 +4,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from codex_runtime_hud import load_settings, save_settings
-from overlay_ui import DEFAULT_TOGGLE_HOTKEY, normalize_toggle_hotkey, toggle_hotkey_label
+from overlay_ui import DEFAULT_TOGGLE_HOTKEY, hotkey_unavailable_message, normalize_toggle_hotkey, toggle_hotkey_label
 
 
 class UiConfigTests(unittest.TestCase):
@@ -28,6 +28,13 @@ class UiConfigTests(unittest.TestCase):
         self.assertEqual(normalize_toggle_hotkey("disabled"), "")
         self.assertEqual(normalize_toggle_hotkey("not-a-shortcut"), DEFAULT_TOGGLE_HOTKEY)
         self.assertEqual(toggle_hotkey_label("ctrl+shift+h"), "Ctrl+Shift+H")
+
+    def test_hotkey_conflict_message_formats_supported_shortcut(self):
+        self.assertEqual(
+            hotkey_unavailable_message("en", "ctrl+shift+h"),
+            "Could not register Ctrl+Shift+H; another application may already be using it.",
+        )
+        self.assertIn("Ctrl+Shift+H", hotkey_unavailable_message("zh-CN", "ctrl+shift+h"))
 
     def test_corrupt_settings_fall_back_to_defaults(self):
         with tempfile.TemporaryDirectory() as temp:

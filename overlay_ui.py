@@ -41,6 +41,13 @@ def toggle_hotkey_label(value: str) -> str:
     return definition[0] if definition is not None else ""
 
 
+def hotkey_unavailable_message(lang: str, shortcut: str) -> str:
+    """Build the localized conflict message without a second format pass."""
+    from codex_runtime_hud import tr
+
+    return tr(lang, "hotkey_unavailable", shortcut=toggle_hotkey_label(shortcut))
+
+
 class WindowsGlobalHotkey:
     """Own a RegisterHotKey message loop without blocking Tk's main thread."""
 
@@ -636,7 +643,7 @@ def run_gui(args: Any) -> int:
             from tkinter import messagebox
             messagebox.showerror(
                 tr(lang, "hotkey_unavailable_title"),
-                tr(lang, "hotkey_unavailable").format(shortcut=toggle_hotkey_label(shortcut)),
+                hotkey_unavailable_message(lang, shortcut),
                 parent=root,
             )
         except Exception:
