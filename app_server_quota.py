@@ -269,6 +269,24 @@ class CodexAppServerQuotaClient:
     def _terminate(process: subprocess.Popen[str]) -> None:
         if process.poll() is not None:
             return
+        if sys.platform == "win32":
+            try:
+                # npm installations commonly expose codex through codex.cmd.
+                # Killing only that wrapper can leave its App Server child
+                # alive, so terminate the complete owned process tree.
+                subprocess.run(
+                    ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=2.0,
+                    check=False,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                )
+                process.wait(timeout=1.0)
+                return
+            except Exception:
+                pass
         try:
             process.terminate()
             process.wait(timeout=1.0)
