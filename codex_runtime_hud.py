@@ -1620,22 +1620,27 @@ class RootThreadSelector:
         return _read_candidate_metadata(path, archived, state)
 
     def candidates(self, codex_home: Path) -> list[RolloutCandidate]:
-        active: list[RolloutCandidate] = []
+        current: list[RolloutCandidate] = []
+        archived_candidates: list[RolloutCandidate] = []
         for base, archived in ((codex_home / "sessions", False), (codex_home / "archived_sessions", True)):
             if not base.exists():
                 continue
+            destination = archived_candidates if archived else current
             try:
                 for path in base.rglob("rollout-*.jsonl"):
-                    active.append(self._metadata(path, archived))
+                    destination.append(self._metadata(path, archived))
             except OSError:
                 continue
-            if any(candidate.eligible for candidate in active) and not archived:
-                break
-        eligible = [candidate for candidate in active if candidate.eligible]
+        eligible_current = [candidate for candidate in current if candidate.eligible]
+        eligible_archived = [candidate for candidate in archived_candidates if candidate.eligible]
         # Quotas are account-global, not properties of the task shown in the
-        # HUD. Collect each window independently so a weekly-only snapshot in
-        # one task cannot erase a newer 5h observation from another root task.
-        self.rate_limits = _latest_candidate_rate_limits(eligible)
+        # HUD. Include archived rollouts even while current sessions exist,
+        # because the newest account snapshot can belong to a task that was
+        # archived immediately after it completed.
+        self.rate_limits = _latest_candidate_rate_limits(eligible_current + eligible_archived)
+        # Archived sessions remain a picker fallback and do not crowd the
+        # current task list merely because their quota snapshots are useful.
+        eligible = eligible_current or eligible_archived
         # Desktop can persist multiple rollout files for the same stable root
         # thread. Keep only its newest representative in the picker.
         by_key: dict[str, RolloutCandidate] = {}

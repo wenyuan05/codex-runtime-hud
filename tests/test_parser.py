@@ -201,6 +201,36 @@ class HudTests(unittest.TestCase):
             self.assertEqual(selection.rate_limits.five_hour.remaining_percent, 39.0)
             self.assertEqual(selection.rate_limits.weekly.remaining_percent, 74.0)
 
+    def test_selector_uses_archived_quota_without_listing_archived_sessions(self):
+        with tempfile.TemporaryDirectory() as td:
+            home = Path(td)
+            sessions = home / "sessions"
+            archived = home / "archived_sessions"
+            sessions.mkdir()
+            archived.mkdir()
+
+            def write_rollout(base, name, used_percent, timestamp):
+                path = base / f"rollout-{name}.jsonl"
+                path.write_text("\n".join([
+                    json.dumps({"type": "session_meta", "payload": {"thread_source": "user", "id": name}}),
+                    json.dumps({"timestamp": timestamp, "type": "event_msg", "payload": {
+                        "type": "token_count", "info": {},
+                        "rate_limits": {
+                            "limit_id": "codex",
+                            "primary": {"used_percent": used_percent, "window_minutes": 300},
+                        },
+                    }}),
+                ]) + "\n", encoding="utf-8")
+                return path
+
+            current_path = write_rollout(sessions, "current", 10, 1000)
+            write_rollout(archived, "archived", 80, 2000)
+            selector = RootThreadSelector()
+            candidates = selector.candidates(home)
+
+            self.assertEqual([candidate.path for candidate in candidates], [current_path])
+            self.assertEqual(selector.rate_limits.five_hour.used_percent, 80.0)
+
     def test_app_server_rate_limits_prefer_standard_multi_bucket_view(self):
         limits = RateLimits.from_app_server_result({
             "rateLimits": {
