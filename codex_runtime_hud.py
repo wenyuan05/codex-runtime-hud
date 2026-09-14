@@ -607,10 +607,12 @@ class Turn:
     def usage(self) -> Usage:
         if self.exact_response_count > 0:
             return self.exact_response_usage
-        if (not self.usage_baseline.total_tokens and
-                (self.last_token_usage.total_tokens or self.last_token_usage.input_tokens or self.last_token_usage.output_tokens)):
+        cumulative = self.usage_latest - self.usage_baseline
+        if cumulative.has_counts:
+            return cumulative
+        if self.last_token_usage.has_counts:
             return self.last_token_usage
-        return self.usage_latest - self.usage_baseline
+        return cumulative
 
 
 @dataclass

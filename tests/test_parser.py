@@ -279,6 +279,36 @@ class HudTests(unittest.TestCase):
             self.assertEqual(m.usage.cached_input_tokens, 400)
             self.assertEqual(m.usage.output_tokens, 80)
 
+    def test_first_turn_uses_cumulative_total_after_multiple_responses(self):
+        rows = [
+            {"timestamp": 1000, "type": "event_msg", "payload": {
+                "type": "task_started", "turn_id": "first", "started_at": 1000,
+            }},
+            {"timestamp": 1001, "type": "event_msg", "payload": {
+                "type": "token_count",
+                "info": {
+                    "total_token_usage": {"input_tokens": 100, "output_tokens": 10, "total_tokens": 110},
+                    "last_token_usage": {"input_tokens": 100, "output_tokens": 10, "total_tokens": 110},
+                },
+            }},
+            {"timestamp": 1002, "type": "event_msg", "payload": {
+                "type": "token_count",
+                "info": {
+                    "total_token_usage": {"input_tokens": 300, "output_tokens": 30, "total_tokens": 330},
+                    "last_token_usage": {"input_tokens": 200, "output_tokens": 20, "total_tokens": 220},
+                },
+            }},
+            {"timestamp": 1003, "type": "event_msg", "payload": {
+                "type": "task_complete", "turn_id": "first", "completed_at": 1003,
+            }},
+        ]
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "rollout-first-turn.jsonl"
+            path.write_text("\n".join(json.dumps(row) for row in rows), encoding="utf-8")
+            usage = parse_rollout(path).metrics("turn").usage
+            self.assertEqual(usage.input_tokens, 300)
+            self.assertEqual(usage.output_tokens, 30)
+
     def test_incremental_reader_matches_full_parse_and_handles_partial_line(self):
         with tempfile.TemporaryDirectory() as td:
             p = Path(td) / "rollout-incremental.jsonl"
